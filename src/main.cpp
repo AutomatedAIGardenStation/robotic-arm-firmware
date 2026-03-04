@@ -12,6 +12,7 @@
  */
 #include <Arduino.h>
 #include "protocol.h"
+#include "../lib/safety/SafetyMonitor.h"
 
 #define SERIAL_BAUD    115200
 #define LINE_BUF_SIZE  128
@@ -21,6 +22,7 @@ static char     g_line_buf[LINE_BUF_SIZE];
 static uint8_t  g_line_len   = 0;
 static uint32_t g_last_hb_ms = 0;
 
+// cppcheck-suppress unusedFunction
 void setup() {
     Serial.begin(SERIAL_BAUD);
     while (!Serial) { /* wait for USB-serial */ }
@@ -32,7 +34,12 @@ void setup() {
     protocol_emit_event("EVT:BOOT:fw=arm_controller:v=0.1.0");
 }
 
+extern SafetyMonitor g_safety_monitor; // Defined in protocol.cpp
+
+// cppcheck-suppress unusedFunction
 void loop() {
+    g_safety_monitor.poll();
+
     // ── Read Serial ──────────────────────────────────────────────────────────
     while (Serial.available()) {
         char c = (char)Serial.read();
