@@ -1,0 +1,34 @@
+name: Agent Task
+description: Request the AI Agent (Jules) to perform a coding task or documentation update.
+title: "Agent: [Feature/Fix] - <short description>"
+labels: ["agent-queue"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        🚀 **AI Agent Instruction Template**
+        When you submit this issue with the `agent-queue` label, the system will automatically:
+        1. Notify the Pipeline Orchestrator.
+        2. Assign the task to the local AI runner (Jules).
+        3. Create a PR with the proposed changes.
+  - type: textarea
+    id: objective
+    attributes:
+      label: Objective
+      description: What exactly do you want the agent to do?
+      placeholder: "e.g., Update the robotic arm PID controller to reduce jitter in the X-axis."
+    validations:
+      required: true
+  - type: textarea
+    id: technical-details
+    attributes:
+      label: Technical Details & Files
+      description: Mention specific files or formulas if known.
+      placeholder: "Check src/motion_control.cpp and verify the Kp gain."
+  - type: checkbox
+    id: confirmation
+    attributes:
+      label: Automated Processing
+      options:
+        - label: I understand that Jules will start working on this immediately.
+          required: true
