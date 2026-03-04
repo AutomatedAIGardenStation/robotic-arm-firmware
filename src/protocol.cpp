@@ -4,7 +4,19 @@
  *
  */
 #include "protocol.h"
+#ifdef ARDUINO
 #include <Arduino.h>
+#else
+extern void delay(unsigned long ms);
+#ifndef PROTOCOL_SERIAL_DUMMY_DEFINED
+class ProtocolSerialDummy {
+public:
+    void print(const char* s) {}
+    void println(const char* s) {}
+};
+static ProtocolSerialDummy Serial;
+#endif
+#endif
 #include <string.h>   // strncmp, strlen, strstr
 #include <stdlib.h>
 #include "CoordinateMapper.h"
@@ -15,6 +27,7 @@
 #include "../lib/motion/EncoderReader.h"
 #include "../lib/motion/MockEncoder.h"
 #include "../lib/motion/ZoneRegistry.h"
+#include "../../config/Config.h"
 
 // Instantiate drivers and controller globally
 MockMotorDriver g_drivers[6];
@@ -81,8 +94,123 @@ static void arm_move_zone(const char* param_str) {
     }
 }
 
-static void arm_pollinate_sequence() {
-    // TODO: execute pollination motion pattern
+static bool wait_for_motion() {
+    // Let's check if the system is faulted before starting.
+    g_safety_monitor.poll();
+    if (g_safety_monitor.isFaulted()) {
+        protocol_emit_event("EVT:ARM_FAULT:code=SEQUENCE_ABORTED");
+        return false;
+    }
+
+    while (g_motion_controller.getState() == MotionState::MOVING) {
+        g_safety_monitor.poll();
+        if (g_safety_monitor.isFaulted()) {
+            protocol_emit_event("EVT:ARM_FAULT:code=SEQUENCE_ABORTED");
+            return false;
+        }
+        g_motion_controller.update();
+    }
+
+    // Also check if we entered FAULT state
+    if (g_motion_controller.getState() == MotionState::FAULT) {
+        protocol_emit_event("EVT:ARM_FAULT:code=SEQUENCE_ABORTED");
+        return false;
+    }
+    return true;
+}
+
+static bool arm_pollinate_sequence() {
+    float inspect_angles[6];
+    if (!resolve_zone("inspect", inspect_angles)) return false;
+
+    Command cmd_inspect;
+    cmd_inspect.type = CommandType::ARM_MOVE_TO;
+    for (int i = 0; i < 6; i++) {
+        cmd_inspect.angles[i] = inspect_angles[i];
+        cmd_inspect.has_angle[i] = true;
+    }
+    g_motion_controller.execute(cmd_inspect);
+    if (!wait_for_motion()) return false;
+
+    for (int cycle = 0; cycle < 3; cycle++) {
+        Command cmd_osc1;
+        cmd_osc1.type = CommandType::ARM_MOVE_TO;
+        for (int i = 0; i < 6; i++) {
+            cmd_osc1.angles[i] = inspect_angles[i];
+            cmd_osc1.has_angle[i] = true;
+        }
+        cmd_osc1.angles[2] += 5.0f; // j3 = index 2
+        g_motion_controller.execute(cmd_osc1);
+        if (!wait_for_motion()) return false;
+
+        delay(POLLINATE_CYCLE_MS);
+
+        Command cmd_osc2;
+        cmd_osc2.type = CommandType::ARM_MOVE_TO;
+        for (int i = 0; i < 6; i++) {
+            cmd_osc2.angles[i] = inspect_angles[i];
+            cmd_osc2.has_angle[i] = true;
+        }
+        cmd_osc2.angles[2] -= 5.0f; // j3 = index 2
+        g_motion_controller.execute(cmd_osc2);
+        if (!wait_for_motion()) return false;
+
+        delay(POLLINATE_CYCLE_MS);
+    }
+
+    float home_angles[6];
+    if (!resolve_zone("home", home_angles)) return false;
+
+    Command cmd_home;
+    cmd_home.type = CommandType::ARM_MOVE_TO;
+    for (int i = 0; i < 6; i++) {
+        cmd_home.angles[i] = home_angles[i];
+        cmd_home.has_angle[i] = true;
+    }
+    g_motion_controller.execute(cmd_home);
+    if (!wait_for_motion()) return false;
+
+    protocol_emit_event(EVT_ARM_DONE);
+    return true;
+}
+
+static bool arm_harvest_sequence() {
+    float harvest_angles[6];
+    if (!resolve_zone("harvest", harvest_angles)) return false;
+
+    Command cmd_harvest;
+    cmd_harvest.type = CommandType::ARM_MOVE_TO;
+    for (int i = 0; i < 6; i++) {
+        cmd_harvest.angles[i] = harvest_angles[i];
+        cmd_harvest.has_angle[i] = true;
+    }
+    g_motion_controller.execute(cmd_harvest);
+    if (!wait_for_motion()) return false;
+
+    Command cmd_close;
+    cmd_close.type = CommandType::GRIPPER_CLOSE;
+    g_motion_controller.execute(cmd_close);
+    if (!wait_for_motion()) return false;
+
+    float deposit_angles[6];
+    if (!resolve_zone("deposit", deposit_angles)) return false;
+
+    Command cmd_deposit;
+    cmd_deposit.type = CommandType::ARM_MOVE_TO;
+    for (int i = 0; i < 6; i++) {
+        cmd_deposit.angles[i] = deposit_angles[i];
+        cmd_deposit.has_angle[i] = true;
+    }
+    g_motion_controller.execute(cmd_deposit);
+    if (!wait_for_motion()) return false;
+
+    Command cmd_open;
+    cmd_open.type = CommandType::GRIPPER_OPEN;
+    g_motion_controller.execute(cmd_open);
+    if (!wait_for_motion()) return false;
+
+    protocol_emit_event(EVT_ARM_DONE);
+    return true;
 }
 
 // ── public API ───────────────────────────────────────────────────────────────
@@ -148,13 +276,10 @@ bool protocol_handle_line(const char* line) {
     }
     if (cmd_match(line, CMD_POLLINATE, len)) {
         arm_pollinate_sequence();
-        protocol_emit_event(EVT_ARM_DONE);
         return true;
     }
     if (cmd_match(line, CMD_HARVEST, len)) {
-        Command cmd;
-        cmd.type = CommandType::H1;
-        g_motion_controller.execute(cmd);
+        arm_harvest_sequence();
         return true;
     }
     if (cmd_match(line, CMD_NOP, len)) {

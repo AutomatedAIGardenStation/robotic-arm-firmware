@@ -10,8 +10,36 @@
  *
  * See: project-info/Docs/06_Software/arm_controller/Serial Protocol & Interfaces.md
  */
+#ifdef ARDUINO
 #include <Arduino.h>
+#else
+#include <stdint.h>
+class MainSerialDummy {
+public:
+    void begin(int baud) {}
+    operator bool() const { return true; }
+    int available() { return 0; }
+    int read() { return -1; }
+};
+static MainSerialDummy Serial;
+extern uint32_t millis();
+#endif
 #include "protocol.h"
+
+#ifndef ARDUINO
+// cppcheck-suppress unusedFunction
+int main(int argc, char **argv) {
+    setup();
+    // cppcheck-suppress knownConditionTrueFalse
+    while (Serial.available()) {
+        loop();
+        break; // just run once for compilation check
+    }
+    return 0;
+}
+uint32_t millis() { return 0; }
+void delay(unsigned long ms) {}
+#endif
 #include "../lib/safety/SafetyMonitor.h"
 #include "../lib/motion/MotionController.h"
 
@@ -44,8 +72,10 @@ void loop() {
     g_safety_monitor.poll();
 
     // ── Read Serial ──────────────────────────────────────────────────────────
+    // cppcheck-suppress knownConditionTrueFalse
     while (Serial.available()) {
         char c = (char)Serial.read();
+        // cppcheck-suppress knownConditionTrueFalse
         if (c == '\n' || c == '\r') {
             if (g_line_len > 0) {
                 g_line_buf[g_line_len] = '\0';
