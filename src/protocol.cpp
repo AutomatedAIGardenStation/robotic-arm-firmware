@@ -60,7 +60,7 @@ bool protocol_handle_line(const char* line) {
     if (len == 0) return false;
 
     const char* params = nullptr;
-    const char* sep = (const char*)memchr(line, ':', len);
+    const char* sep = static_cast<const char*>(memchr(line, ':', len));
     if (sep) params = sep + 1;
 
     if (cmd_match(line, CMD_ARM_HOME, len)) {
