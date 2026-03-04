@@ -1,10 +1,15 @@
 #include <unity.h>
 #include "MotionController.h"
 #include "MockMotorDriver.h"
+#include "MockLimitSwitch.h"
+#include "SafetyMonitor.h"
 #include <string.h>
 
 MockMotorDriver drivers[6];
 IMotorDriver* driver_ptrs[6];
+MockLimitSwitch switches[6];
+ILimitSwitch* switch_ptrs[6];
+SafetyMonitor* monitor;
 MotionController* controller;
 
 char last_event[128];
@@ -17,12 +22,17 @@ void setUp(void) {
     for (int i = 0; i < 6; i++) {
         drivers[i].reset();
         driver_ptrs[i] = &drivers[i];
+
+        switches[i].setTriggered(false);
+        switch_ptrs[i] = &switches[i];
     }
-    controller = new MotionController(driver_ptrs);
+    monitor = new SafetyMonitor(switch_ptrs, driver_ptrs);
+    controller = new MotionController(driver_ptrs, monitor);
     last_event[0] = '\0';
 }
 
 void tearDown(void) {
+    delete monitor;
     delete controller;
 }
 
@@ -98,6 +108,37 @@ void test_gripper_close_completes(void) {
     TEST_ASSERT_EQUAL_STRING("EVT:ARM_DONE", last_event);
 }
 
+void test_arm_home_when_faulted_clears_fault_and_executes(void) {
+    switches[0].setTriggered(true);
+    monitor->poll(); // fault
+    TEST_ASSERT_TRUE(monitor->isFaulted());
+
+    switches[0].setTriggered(false); // release switch
+
+    Command cmd;
+    cmd.type = CommandType::ARM_HOME;
+    controller->execute(cmd);
+
+    TEST_ASSERT_FALSE(monitor->isFaulted());
+    TEST_ASSERT_EQUAL(MotionState::MOVING, controller->getState());
+}
+
+void test_arm_home_when_faulted_emits_limit_active_if_still_pressed(void) {
+    switches[0].setTriggered(true);
+    monitor->poll(); // fault
+    TEST_ASSERT_TRUE(monitor->isFaulted());
+
+    // do NOT release switch
+
+    Command cmd;
+    cmd.type = CommandType::ARM_HOME;
+    controller->execute(cmd);
+
+    TEST_ASSERT_TRUE(monitor->isFaulted());
+    TEST_ASSERT_EQUAL_STRING("EVT:ARM_FAULT:code=LIMIT_ACTIVE", last_event);
+    TEST_ASSERT_EQUAL(MotionState::IDLE, controller->getState());
+}
+
 void test_multiple_commands_queued_and_executed(void) {
     Command cmd1; cmd1.type = CommandType::ARM_HOME;
     Command cmd2; cmd2.type = CommandType::GRIPPER_OPEN;
@@ -156,6 +197,8 @@ int main(int argc, char **argv) {
     RUN_TEST(test_arm_move_to_out_of_range_angle);
     RUN_TEST(test_gripper_open_completes);
     RUN_TEST(test_gripper_close_completes);
+    RUN_TEST(test_arm_home_when_faulted_clears_fault_and_executes);
+    RUN_TEST(test_arm_home_when_faulted_emits_limit_active_if_still_pressed);
     RUN_TEST(test_multiple_commands_queued_and_executed);
     return UNITY_END();
 }

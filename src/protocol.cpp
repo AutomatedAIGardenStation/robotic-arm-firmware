@@ -10,11 +10,18 @@
 #include "CoordinateMapper.h"
 #include "../lib/motion/MotionController.h"
 #include "../lib/motion/MockMotorDriver.h"
+#include "../lib/safety/MockLimitSwitch.h"
+#include "../lib/safety/SafetyMonitor.h"
 
 // Instantiate drivers and controller globally
 MockMotorDriver g_drivers[6];
 IMotorDriver* g_driver_ptrs[6] = { &g_drivers[0], &g_drivers[1], &g_drivers[2], &g_drivers[3], &g_drivers[4], &g_drivers[5] };
-MotionController g_motion_controller(g_driver_ptrs);
+
+MockLimitSwitch g_limit_switches[6];
+ILimitSwitch* g_limit_switch_ptrs[6] = { &g_limit_switches[0], &g_limit_switches[1], &g_limit_switches[2], &g_limit_switches[3], &g_limit_switches[4], &g_limit_switches[5] };
+
+SafetyMonitor g_safety_monitor(g_limit_switch_ptrs, g_driver_ptrs);
+MotionController g_motion_controller(g_driver_ptrs, &g_safety_monitor);
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 

@@ -4,8 +4,9 @@
 // Declaration to satisfy compiler without including protocol.h
 extern void protocol_emit_event(const char* event);
 
-MotionController::MotionController(IMotorDriver* drvs[6]) {
+MotionController::MotionController(IMotorDriver* drvs[6], SafetyMonitor* safety) {
     state = MotionState::IDLE;
+    safety_monitor = safety;
 
     for (int i = 0; i < 6; i++) {
         if (drvs) {
@@ -21,6 +22,18 @@ MotionState MotionController::getState() const {
 }
 
 void MotionController::execute(const Command& cmd) {
+    if (safety_monitor && safety_monitor->isFaulted()) {
+        if (cmd.type == CommandType::ARM_HOME) {
+            if (!safety_monitor->clearFault()) {
+                protocol_emit_event("EVT:ARM_FAULT:code=LIMIT_ACTIVE");
+                return;
+            }
+        } else {
+            protocol_emit_event("EVT:ARM_FAULT:code=LIMIT_HIT");
+            return;
+        }
+    }
+
     if (state == MotionState::FAULT) {
         return;
     }
