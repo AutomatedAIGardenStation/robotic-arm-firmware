@@ -21,6 +21,9 @@ pio run -e mega2560 -t upload
 
 # Monitor serial output
 pio device monitor -b 115200
+
+# Run tests
+pio test -e native
 ```
 
 Available environments: `mega2560`, `nucleo_f446re`, `esp32dev`
@@ -34,6 +37,10 @@ arm_controller/
 ├── platformio.ini      # PlatformIO environments for supported boards
 ├── config/
 │   └── pins.h          # Board-specific pin assignments – edit for your wiring
+├── lib/
+│   ├── hal/            # Hardware abstraction layer interfaces
+│   ├── motion/         # Motion controller and logic
+│   └── safety/         # Safety monitor and limit switches
 └── src/
     ├── main.cpp        # Setup / loop, Serial reader, heartbeat
     ├── protocol.h      # Command & event constants, public API
@@ -49,9 +56,24 @@ arm_controller/
 | Backend → Controller | `<COMMAND>[:<key>=<val>]*\n` |
 | Controller → Backend | `EVT:<NAME>[:<key>=<val>]*\n` |
 
-**Key commands:** `ARM_HOME`, `ARM_MOVE_TO:j1=<deg>:...`, `GRIPPER_OPEN`, `GRIPPER_CLOSE`, `H1` (harvest), `P1` (pollinate), `M1` (move zone)
+**Commands:**
+| Command | Description |
+| --- | --- |
+| `ARM_HOME` | Return arm to home position |
+| `ARM_MOVE_TO:j1=...:j2=...` | Move to joint coords |
+| `GRIPPER_OPEN` | Open gripper |
+| `GRIPPER_CLOSE` | Close gripper |
+| `P1` | Initiate pollination sequence |
+| `H1` | Initiate harvest sequence |
+| `M1` | Move arm to a named zone |
+| `NOP` | No operation |
 
-**Key events:** `EVT:ARM_DONE`, `EVT:ARM_FAULT:code=<reason>`, `EVT:HEARTBEAT:status=OK`
+**Events:**
+| Event | Description |
+| --- | --- |
+| `EVT:ARM_DONE` | Motion complete |
+| `EVT:ARM_FAULT:code=<reason>` | Fault condition |
+| `EVT:HEARTBEAT:status=OK` | Periodic heartbeat |
 
 ---
 
@@ -60,6 +82,6 @@ arm_controller/
 - Implement HAL stubs in `src/protocol.cpp` for your motor driver library (e.g. AccelStepper, Servo).
 - Update `config/pins.h` to match your physical wiring.
 - Motion-complete events (`EVT:ARM_DONE`) **must** be emitted after every command so the backend's state machine can advance.
-- The watchdog / heartbeat is emitted every 5 s. The backend treats a missed heartbeat as a controller fault.
+- The watchdog / heartbeat is emitted every 1 s. The backend treats a missed heartbeat as a controller fault.
 
 See also: [07_Development/arm_controller](../project-info/Docs/07_Development/arm_controller/README.md)
