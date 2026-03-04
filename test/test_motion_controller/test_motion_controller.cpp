@@ -98,6 +98,56 @@ void test_gripper_close_completes(void) {
     TEST_ASSERT_EQUAL_STRING("EVT:ARM_DONE", last_event);
 }
 
+void test_multiple_commands_queued_and_executed(void) {
+    Command cmd1; cmd1.type = CommandType::ARM_HOME;
+    Command cmd2; cmd2.type = CommandType::GRIPPER_OPEN;
+    Command cmd3; cmd3.type = CommandType::GRIPPER_CLOSE;
+    Command cmd4; cmd4.type = CommandType::H1;
+
+    // Send first command, should transition to MOVING
+    controller->execute(cmd1);
+    TEST_ASSERT_EQUAL(MotionState::MOVING, controller->getState());
+
+    // Send 3 more commands while MOVING, they should be queued
+    controller->execute(cmd2);
+    controller->execute(cmd3);
+    controller->execute(cmd4);
+
+    // Queue is full now (4 commands: 1 active, 3 queued, wait: CAPACITY is 4, so 3 queued is fine)
+    // Send 5th command, should emit QUEUE_FULL
+    Command cmd5; cmd5.type = CommandType::ARM_MOVE_TO;
+    Command cmd6; cmd6.type = CommandType::ARM_HOME;
+
+    // Execute cmd5, it gets queued (queue has 4 items now)
+    controller->execute(cmd5);
+
+    // Execute cmd6, it should be rejected because queue is full
+    controller->execute(cmd6);
+    TEST_ASSERT_EQUAL_STRING("EVT:ARM_FAULT:code=QUEUE_FULL", last_event);
+
+    // Now complete cmd1
+    controller->update(); // Completes ARM_HOME, dequeues GRIPPER_OPEN, state is MOVING again
+    TEST_ASSERT_EQUAL(MotionState::MOVING, controller->getState());
+    // EVT:ARM_DONE should be emitted, but wait, last_event is overwritten during update if process_command calls anything? No, process_command doesn't emit anything on success. But update() emitted EVT:ARM_DONE first, so last_event is EVT:ARM_DONE.
+    // However, wait, in process_command, mock driver enable is called.
+
+    // Complete cmd2
+    controller->update(); // Completes GRIPPER_OPEN, dequeues GRIPPER_CLOSE
+    TEST_ASSERT_EQUAL(MotionState::MOVING, controller->getState());
+
+    // Complete cmd3
+    controller->update(); // Completes GRIPPER_CLOSE, dequeues H1
+    TEST_ASSERT_EQUAL(MotionState::MOVING, controller->getState());
+
+    // Complete cmd4
+    controller->update(); // Completes H1, dequeues ARM_MOVE_TO
+    TEST_ASSERT_EQUAL(MotionState::MOVING, controller->getState());
+
+    // Complete cmd5
+    controller->update(); // Completes ARM_MOVE_TO, queue empty
+    TEST_ASSERT_EQUAL(MotionState::IDLE, controller->getState());
+}
+
 int main(int argc, char **argv) {
     UNITY_BEGIN();
     RUN_TEST(test_initial_state_is_idle);
@@ -106,5 +156,6 @@ int main(int argc, char **argv) {
     RUN_TEST(test_arm_move_to_out_of_range_angle);
     RUN_TEST(test_gripper_open_completes);
     RUN_TEST(test_gripper_close_completes);
+    RUN_TEST(test_multiple_commands_queued_and_executed);
     return UNITY_END();
 }
