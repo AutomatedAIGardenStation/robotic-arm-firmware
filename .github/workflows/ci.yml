@@ -80,8 +80,8 @@ jobs:
             const status = '${{ needs.build.result }}' === 'success' && '${{ needs.lint.result }}' === 'success'
               ? 'success' : 'failure';
             await github.rest.repos.createDispatchEvent({
-              owner: 'KingEGame',
-              repo: 'GardenStation-ci-cd',
+              owner: 'AutomatedAIGardenStation',
+              repo: 'pipeline-orchestrator',
               event_type: 'arm-controller-changed',
               client_payload: { branch, pr_number: prNumber, status }
             });
