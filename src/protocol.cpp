@@ -76,6 +76,7 @@ static void arm_harvest_sequence() {
 
 // ── public API ───────────────────────────────────────────────────────────────
 
+// cppcheck-suppress unusedFunction
 bool protocol_handle_line(const char* line) {
     if (!line) return false;
     size_t len = strlen(line);

@@ -21,6 +21,7 @@ static char     g_line_buf[LINE_BUF_SIZE];
 static uint8_t  g_line_len   = 0;
 static uint32_t g_last_hb_ms = 0;
 
+// cppcheck-suppress unusedFunction
 void setup() {
     Serial.begin(SERIAL_BAUD);
     while (!Serial) { /* wait for USB-serial */ }
@@ -32,6 +33,7 @@ void setup() {
     protocol_emit_event("EVT:BOOT:fw=arm_controller:v=0.1.0");
 }
 
+// cppcheck-suppress unusedFunction
 void loop() {
     // ── Read Serial ──────────────────────────────────────────────────────────
     while (Serial.available()) {
