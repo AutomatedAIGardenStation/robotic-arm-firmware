@@ -3,12 +3,17 @@
 #include "MockMotorDriver.h"
 #include "MockLimitSwitch.h"
 #include "SafetyMonitor.h"
+#include "MockEncoder.h"
 #include <string.h>
 
 MockMotorDriver drivers[6];
 IMotorDriver* driver_ptrs[6];
 MockLimitSwitch switches[6];
 ILimitSwitch* switch_ptrs[6];
+MockEncoder mock_encoders[6];
+IEncoder* encoder_ptrs[6];
+EncoderReader* reader;
+
 SafetyMonitor* monitor;
 MotionController* controller;
 
@@ -25,15 +30,20 @@ void setUp(void) {
 
         switches[i].setTriggered(false);
         switch_ptrs[i] = &switches[i];
+
+        mock_encoders[i].reset();
+        encoder_ptrs[i] = &mock_encoders[i];
     }
+    reader = new EncoderReader(encoder_ptrs);
     monitor = new SafetyMonitor(switch_ptrs, driver_ptrs);
-    controller = new MotionController(driver_ptrs, monitor);
+    controller = new MotionController(driver_ptrs, monitor, reader);
     last_event[0] = '\0';
 }
 
 void tearDown(void) {
     delete monitor;
     delete controller;
+    delete reader;
 }
 
 void test_initial_state_is_idle(void) {
@@ -46,6 +56,8 @@ void test_arm_home_transitions_to_moving_and_completes(void) {
 
     controller->execute(cmd);
     TEST_ASSERT_EQUAL(MotionState::MOVING, controller->getState());
+
+    // Position doesn't matter for ARM_HOME during execution, but it resets at the end
 
     controller->update();
     TEST_ASSERT_EQUAL(MotionState::IDLE, controller->getState());
@@ -60,6 +72,8 @@ void test_arm_move_to_valid_angles(void) {
 
     controller->execute(cmd);
     TEST_ASSERT_EQUAL(MotionState::MOVING, controller->getState());
+
+    mock_encoders[0].setPosition(100);
 
     controller->update();
     TEST_ASSERT_EQUAL(MotionState::IDLE, controller->getState());

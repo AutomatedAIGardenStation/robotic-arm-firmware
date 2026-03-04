@@ -12,6 +12,8 @@
 #include "../lib/motion/MockMotorDriver.h"
 #include "../lib/safety/MockLimitSwitch.h"
 #include "../lib/safety/SafetyMonitor.h"
+#include "../lib/motion/EncoderReader.h"
+#include "../lib/motion/MockEncoder.h"
 
 // Instantiate drivers and controller globally
 MockMotorDriver g_drivers[6];
@@ -20,8 +22,13 @@ IMotorDriver* g_driver_ptrs[6] = { &g_drivers[0], &g_drivers[1], &g_drivers[2], 
 MockLimitSwitch g_limit_switches[6];
 ILimitSwitch* g_limit_switch_ptrs[6] = { &g_limit_switches[0], &g_limit_switches[1], &g_limit_switches[2], &g_limit_switches[3], &g_limit_switches[4], &g_limit_switches[5] };
 
+MockEncoder g_encoders[6];
+IEncoder* g_encoder_ptrs[6] = { &g_encoders[0], &g_encoders[1], &g_encoders[2], &g_encoders[3], &g_encoders[4], &g_encoders[5] };
+
+EncoderReader g_encoder_reader(g_encoder_ptrs);
+
 SafetyMonitor g_safety_monitor(g_limit_switch_ptrs, g_driver_ptrs);
-MotionController g_motion_controller(g_driver_ptrs, &g_safety_monitor);
+MotionController g_motion_controller(g_driver_ptrs, &g_safety_monitor, &g_encoder_reader);
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 

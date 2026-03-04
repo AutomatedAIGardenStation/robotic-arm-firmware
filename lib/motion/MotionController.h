@@ -5,6 +5,7 @@
 #include "CommandQueue.h"
 #include "Command.h"
 #include "../safety/SafetyMonitor.h"
+#include "EncoderReader.h"
 #include <stdint.h>
 #include <stddef.h>
 
@@ -16,7 +17,7 @@ enum class MotionState {
 
 class MotionController {
 public:
-    explicit MotionController(IMotorDriver* drivers[6], SafetyMonitor* safety);
+    explicit MotionController(IMotorDriver* drivers[6], SafetyMonitor* safety, EncoderReader* encoder_reader = nullptr);
 
     void execute(const Command& cmd);
     MotionState getState() const;
@@ -26,6 +27,11 @@ private:
     MotionState state;
     IMotorDriver* drivers[6];
     SafetyMonitor* safety_monitor;
+    EncoderReader* encoder_reader;
+
+    int32_t expected_steps[6];
+    bool active_joints[6];
+    CommandType current_command_type;
 
     CommandQueue queue;
 

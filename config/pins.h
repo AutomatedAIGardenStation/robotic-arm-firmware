@@ -7,6 +7,8 @@
 #ifndef PINS_H
 #define PINS_H
 
+#define POSITION_TOLERANCE_STEPS 5
+
 #ifdef ARM_CONTROLLER
 
 #if defined(ARDUINO_AVR_MEGA2560)
