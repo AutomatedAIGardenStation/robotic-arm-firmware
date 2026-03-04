@@ -42,6 +42,11 @@ jobs:
       - name: Build firmware – ${{ matrix.env }}
         run: pio run -e ${{ matrix.env }}
 
+      - name: Run unit tests
+        run: |
+          python3 -m pip install -U platformio
+          pio test -e native
+
   # ── Static analysis (cppcheck) ─────────────────────────────────────────────
   lint:
     name: Static Analysis (cppcheck)

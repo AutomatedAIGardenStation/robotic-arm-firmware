@@ -13,10 +13,11 @@
 #include <Arduino.h>
 #include "protocol.h"
 #include "../lib/safety/SafetyMonitor.h"
+#include "../lib/motion/MotionController.h"
 
 #define SERIAL_BAUD    115200
 #define LINE_BUF_SIZE  128
-#define HEARTBEAT_MS   5000UL   // emit heartbeat every 5 s
+#define HEARTBEAT_MS   1000UL   // emit heartbeat every 1 s
 
 static char     g_line_buf[LINE_BUF_SIZE];
 static uint8_t  g_line_len   = 0;
@@ -35,9 +36,11 @@ void setup() {
 }
 
 extern SafetyMonitor g_safety_monitor; // Defined in protocol.cpp
+extern MotionController g_motion_controller;
 
 // cppcheck-suppress unusedFunction
 void loop() {
+    static MotionState g_last_motion_state = MotionState::IDLE;
     g_safety_monitor.poll();
 
     // ── Read Serial ──────────────────────────────────────────────────────────
@@ -62,5 +65,14 @@ void loop() {
         g_last_hb_ms = now;
     }
 
-    // TODO: poll motion-complete flags and emit EVT:ARM_DONE / EVT:ARM_FAULT
+    g_motion_controller.update();
+    MotionState current_state = g_motion_controller.getState();
+    if (g_last_motion_state == MotionState::MOVING) {
+        if (current_state == MotionState::IDLE) {
+            protocol_emit_event("EVT:ARM_DONE");
+        } else if (current_state == MotionState::FAULT) {
+            protocol_emit_event("EVT:ARM_FAULT:code=UNKNOWN");
+        }
+    }
+    g_last_motion_state = current_state;
 }
