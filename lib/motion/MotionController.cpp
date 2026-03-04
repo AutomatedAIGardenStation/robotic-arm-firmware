@@ -6,7 +6,6 @@ extern void protocol_emit_event(const char* event);
 
 MotionController::MotionController(IMotorDriver* drvs[6]) {
     state = MotionState::IDLE;
-    has_buffered_cmd = false;
 
     for (int i = 0; i < 6; i++) {
         if (drvs) {
@@ -27,9 +26,9 @@ void MotionController::execute(const Command& cmd) {
     }
 
     if (state == MotionState::MOVING) {
-        // Single slot buffer
-        buffered_cmd = cmd;
-        has_buffered_cmd = true;
+        if (!queue.enqueue(cmd)) {
+            protocol_emit_event("EVT:ARM_FAULT:code=QUEUE_FULL");
+        }
         return;
     }
 
@@ -74,9 +73,9 @@ void MotionController::update() {
             }
         }
 
-        if (has_buffered_cmd) {
-            has_buffered_cmd = false;
-            process_command(buffered_cmd);
+        Command next_cmd;
+        if (queue.dequeue(next_cmd)) {
+            process_command(next_cmd);
         }
     }
 }
