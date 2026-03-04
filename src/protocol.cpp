@@ -7,6 +7,8 @@
 #include "protocol.h"
 #include <Arduino.h>
 #include <string.h>   // strncmp, strlen, strstr
+#include <stdlib.h>
+#include "CoordinateMapper.h"
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -24,8 +26,31 @@ static void arm_go_home() {
 }
 
 static void arm_move_to(const char* param_str) {
-    // TODO: parse ":j1=<v>:j2=<v>..." and drive servos to target angles
-    (void)param_str;
+    if (!param_str) return;
+
+    // Parse ":j1=<v>:j2=<v>..."
+    char buffer[128];
+    strncpy(buffer, param_str, sizeof(buffer) - 1);
+    buffer[sizeof(buffer) - 1] = '\0';
+
+    char* token = strtok(buffer, ":");
+    while (token != nullptr) {
+        if (token[0] == 'j' || token[0] == 'J') {
+            int joint_id = token[1] - '0';
+            char* val_str = strchr(token, '=');
+            if (val_str && joint_id >= 1 && joint_id <= 6) {
+                float degrees = atof(val_str + 1);
+                if (!CoordinateMapper::is_in_range(joint_id, degrees)) {
+                    protocol_emit_event("EVT:ARM_FAULT:code=OUT_OF_RANGE");
+                    return;
+                }
+                // (Optional) convert to steps to prepare motion command here
+            }
+        }
+        token = strtok(nullptr, ":");
+    }
+
+    // TODO: drive servos to target angles
 }
 
 static void gripper_open() {
