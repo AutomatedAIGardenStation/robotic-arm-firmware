@@ -33,11 +33,11 @@ static void arm_move_to(const char* param_str) {
     strncpy(buffer, param_str, sizeof(buffer) - 1);
     buffer[sizeof(buffer) - 1] = '\0';
 
-    char* token = strtok(buffer, ":");
+    const char* token = strtok(buffer, ":");
     while (token != nullptr) {
         if (token[0] == 'j' || token[0] == 'J') {
             int joint_id = token[1] - '0';
-            char* val_str = strchr(token, '=');
+            const char* val_str = strchr(token, '=');
             if (val_str && joint_id >= 1 && joint_id <= 6) {
                 float degrees = atof(val_str + 1);
                 if (!CoordinateMapper::is_in_range(joint_id, degrees)) {
