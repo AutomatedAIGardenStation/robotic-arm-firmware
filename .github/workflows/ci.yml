@@ -1,0 +1,88 @@
+# arm_controller CI
+# Runs on every push / PR to main.
+# Builds the firmware using PlatformIO for all supported targets,
+# then runs static analysis. No hardware required.
+
+name: arm_controller CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  # ── Build all PlatformIO environments ──────────────────────────────────────
+  build:
+    name: Build (${{ matrix.env }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        env: [mega2560, nucleo_f446re, esp32dev]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache PlatformIO packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ matrix.env }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: pio-${{ matrix.env }}-
+
+      - name: Set up Python (required by PlatformIO)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install PlatformIO CLI
+        run: pip install platformio
+
+      - name: Build firmware – ${{ matrix.env }}
+        run: pio run -e ${{ matrix.env }}
+
+  # ── Static analysis (cppcheck) ─────────────────────────────────────────────
+  lint:
+    name: Static Analysis (cppcheck)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cppcheck
+        run: sudo apt-get install -y cppcheck
+
+      - name: Run cppcheck on src/
+        run: |
+          cppcheck \
+            --enable=warning,style,performance,portability \
+            --suppress=missingIncludeSystem \
+            --error-exitcode=1 \
+            --inline-suppr \
+            src/
+
+  # ── Notify ci-cd repo ──────────────────────────────────────────────────────
+  notify-ci-cd:
+    name: Notify GardenStation-ci-cd
+    runs-on: ubuntu-latest
+    needs: [build, lint]
+    if: always()
+    steps:
+      - name: Dispatch arm-controller-changed
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.REPO_ACCESS_TOKEN }}
+          script: |
+            const branch = context.payload.pull_request
+              ? context.payload.pull_request.head.ref
+              : context.ref.replace(/^refs\/heads\//, '');
+            const prNumber = context.payload.pull_request ? context.payload.pull_request.number : null;
+            const status = '${{ needs.build.result }}' === 'success' && '${{ needs.lint.result }}' === 'success'
+              ? 'success' : 'failure';
+            await github.rest.repos.createDispatchEvent({
+              owner: 'KingEGame',
+              repo: 'GardenStation-ci-cd',
+              event_type: 'arm-controller-changed',
+              client_payload: { branch, pr_number: prNumber, status }
+            });
+            console.log(`Dispatched arm-controller-changed (${status})`);
