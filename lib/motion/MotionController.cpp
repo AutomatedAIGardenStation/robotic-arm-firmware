@@ -4,9 +4,14 @@
 // Declaration to satisfy compiler without including protocol.h
 extern void protocol_emit_event(const char* event);
 
-MotionController::MotionController(IMotorDriver* drvs[6], SafetyMonitor* safety) {
+#include "../../config/pins.h"
+#include <stdlib.h>
+
+MotionController::MotionController(IMotorDriver* drvs[6], SafetyMonitor* safety, EncoderReader* encoder_reader) {
     state = MotionState::IDLE;
+    current_command_type = CommandType::NONE;
     safety_monitor = safety;
+    this->encoder_reader = encoder_reader;
 
     for (int i = 0; i < 6; i++) {
         if (drvs) {
@@ -14,6 +19,8 @@ MotionController::MotionController(IMotorDriver* drvs[6], SafetyMonitor* safety)
         } else {
             drivers[i] = nullptr;
         }
+        expected_steps[i] = 0;
+        active_joints[i] = false;
     }
 }
 
@@ -61,6 +68,11 @@ void MotionController::process_command(const Command& cmd) {
     }
 
     state = MotionState::MOVING;
+    current_command_type = cmd.type;
+
+    for (int i = 0; i < 6; i++) {
+        active_joints[i] = false;
+    }
 
     // Delegate to mock driver to record the call so we know it tried to move
     for (int i = 0; i < 6; i++) {
@@ -70,6 +82,8 @@ void MotionController::process_command(const Command& cmd) {
             // Real implementation will calculate steps using CoordinateMapper
             if (cmd.type == CommandType::ARM_MOVE_TO && cmd.has_angle[i]) {
                 drivers[i]->step(true, 100);
+                active_joints[i] = true;
+                expected_steps[i] += 100; // Increment expected steps by mock step count
             }
         }
     }
@@ -77,14 +91,45 @@ void MotionController::process_command(const Command& cmd) {
 
 void MotionController::update() {
     if (state == MotionState::MOVING) {
-        state = MotionState::IDLE;
-        protocol_emit_event("EVT:ARM_DONE");
+        bool position_mismatch = false;
+
+        if (encoder_reader) {
+            for (int i = 0; i < 6; i++) {
+                if (active_joints[i]) {
+                    int32_t actual = encoder_reader->getPosition(i + 1);
+                    int32_t diff = labs(actual - expected_steps[i]);
+                    if (diff > POSITION_TOLERANCE_STEPS) {
+                        position_mismatch = true;
+                        break;
+                    }
+                }
+            }
+        }
 
         for (int i = 0; i < 6; i++) {
             if (drivers[i]) {
                 drivers[i]->disable();
             }
         }
+
+        if (position_mismatch) {
+            state = MotionState::FAULT;
+            protocol_emit_event("EVT:ARM_FAULT:code=POSITION_MISMATCH");
+            return;
+        }
+
+        if (current_command_type == CommandType::ARM_HOME) {
+            if (encoder_reader) {
+                encoder_reader->resetAll();
+            }
+            for (int i = 0; i < 6; i++) {
+                expected_steps[i] = 0;
+                active_joints[i] = false;
+            }
+        }
+
+        state = MotionState::IDLE;
+        protocol_emit_event("EVT:ARM_DONE");
 
         Command next_cmd;
         if (queue.dequeue(next_cmd)) {
