@@ -1,11 +1,27 @@
-# PlatformIO build artifacts
+# PlatformIO (arm_controller: Mega2560, Nucleo F446RE, ESP32)
 .pio/
 .pioenvs/
 .piolibdeps/
+.pio/build/
+
+# Build artifacts
+*.o
+*.elf
+*.bin
+*.hex
+*.map
+*.lst
+
+# Static analysis (cppcheck)
+cppcheck-report.*
+*.cppcheck
 
 # IDE
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
 
 # OS
 .DS_Store
