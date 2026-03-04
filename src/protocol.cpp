@@ -14,6 +14,7 @@
 #include "../lib/safety/SafetyMonitor.h"
 #include "../lib/motion/EncoderReader.h"
 #include "../lib/motion/MockEncoder.h"
+#include "../lib/motion/ZoneRegistry.h"
 
 // Instantiate drivers and controller globally
 MockMotorDriver g_drivers[6];
@@ -40,8 +41,44 @@ static inline bool cmd_match(const char* line, const char* cmd, size_t line_len)
 }
 
 static void arm_move_zone(const char* param_str) {
-    // TODO: look up named zone coordinates and delegate to arm_move_to
-    (void)param_str;
+    if (!param_str) {
+        Serial.println("ERR:UNKNOWN_ZONE:");
+        return;
+    }
+
+    const char* zone_name = nullptr;
+    char buffer[128];
+    strncpy(buffer, param_str, sizeof(buffer) - 1);
+    buffer[sizeof(buffer) - 1] = '\0';
+
+    const char* token = strtok(buffer, ":");
+    while (token != nullptr) {
+        if (strncmp(token, "zone=", 5) == 0) {
+            zone_name = token + 5;
+            break;
+        }
+        token = strtok(nullptr, ":");
+    }
+
+    if (!zone_name) {
+        Serial.println("ERR:UNKNOWN_ZONE:");
+        return;
+    }
+
+    float angles[6];
+    if (resolve_zone(zone_name, angles)) {
+        Command cmd;
+        cmd.type = CommandType::ARM_MOVE_TO;
+        for (int i = 0; i < 6; i++) {
+            cmd.angles[i] = angles[i];
+            cmd.has_angle[i] = true;
+        }
+        g_motion_controller.execute(cmd);
+        // Motion controller will emit EVT:ARM_DONE when complete
+    } else {
+        Serial.print("ERR:UNKNOWN_ZONE:");
+        Serial.println(zone_name);
+    }
 }
 
 static void arm_pollinate_sequence() {
