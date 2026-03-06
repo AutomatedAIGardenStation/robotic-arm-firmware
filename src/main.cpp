@@ -109,7 +109,7 @@ void loop() {
     g_motion_controller.update();
     MotionState current_state = g_motion_controller.getState();
     if (g_last_motion_state == MotionState::MOVING) {
-        if (current_state == MotionState::FAULT && current_state != g_last_motion_state) {
+        if (current_state == MotionState::FAULT) {
             // Handled internally by MotionController
         }
     }
