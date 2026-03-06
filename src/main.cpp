@@ -56,6 +56,9 @@ static uint8_t  g_line_len   = 0;
 static uint32_t g_last_hb_ms = 0;
 uint32_t g_last_ping_ms = 0;
 
+extern SafetyMonitor g_safety_monitor; // Defined in protocol.cpp
+extern MotionController g_motion_controller;
+
 // cppcheck-suppress unusedFunction
 void setup() {
     Serial.begin(SERIAL_BAUD, SERIAL_8N1);
@@ -72,9 +75,6 @@ void setup() {
     cmd.type = CommandType::ARM_HOME;
     g_motion_controller.execute(cmd);
 }
-
-extern SafetyMonitor g_safety_monitor; // Defined in protocol.cpp
-extern MotionController g_motion_controller;
 
 // cppcheck-suppress unusedFunction
 void loop() {
