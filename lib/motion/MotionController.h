@@ -6,6 +6,7 @@
 #include "Command.h"
 #include "../safety/SafetyMonitor.h"
 #include "EncoderReader.h"
+#include "StepperEngine.h"
 #include <stdint.h>
 #include <stddef.h>
 
@@ -31,7 +32,9 @@ private:
     IMotorDriver* drivers[6];
     SafetyMonitor* safety_monitor;
     EncoderReader* encoder_reader;
+    StepperEngine engine;
 
+    int32_t current_steps[6];
     int32_t expected_steps[6];
     bool active_joints[6];
     CommandType current_command_type;

@@ -5,6 +5,7 @@
 #include "SafetyMonitor.h"
 #include "MockEncoder.h"
 #include "EncoderReader.h"
+#include "CoordinateMapper.h"
 #include <string.h>
 
 MockMotorDriver drivers[6];
@@ -76,10 +77,12 @@ void test_motion_controller_emits_arm_done_when_matched(void) {
 
     controller->execute(cmd);
 
-    // In MockMotorDriver, we step by 100 for valid targets in ARM_MOVE_TO.
-    mock_encoders[0].setPosition(100);
+    float steps = CoordinateMapper::steps_from_mm(CoordinateMapper::AXIS_X, 90.0f);
+    mock_encoders[0].setPosition((int32_t)steps);
 
-    controller->update();
+    while (controller->getState() == MotionState::MOVING) {
+        controller->update();
+    }
     TEST_ASSERT_EQUAL(MotionState::IDLE, controller->getState());
     TEST_ASSERT_EQUAL_STRING("EVT:ARM_DONE", last_event);
 }
@@ -92,10 +95,13 @@ void test_motion_controller_emits_fault_when_deviated(void) {
 
     controller->execute(cmd);
 
+    float steps = CoordinateMapper::steps_from_mm(CoordinateMapper::AXIS_X, 90.0f);
     // Position tolerance is 5. We deviate by 6.
-    mock_encoders[0].setPosition(106);
+    mock_encoders[0].setPosition((int32_t)steps + 6);
 
-    controller->update();
+    while (controller->getState() == MotionState::MOVING) {
+        controller->update();
+    }
     TEST_ASSERT_EQUAL(MotionState::FAULT, controller->getState());
     TEST_ASSERT_EQUAL_STRING("EVT:ARM_FAULT:code=POSITION_MISMATCH:tier=hard", last_event);
 }
@@ -108,10 +114,13 @@ void test_motion_controller_emits_done_within_tolerance(void) {
 
     controller->execute(cmd);
 
+    float steps = CoordinateMapper::steps_from_mm(CoordinateMapper::AXIS_X, 90.0f);
     // Position tolerance is 5. We deviate by 5.
-    mock_encoders[0].setPosition(105);
+    mock_encoders[0].setPosition((int32_t)steps + 5);
 
-    controller->update();
+    while (controller->getState() == MotionState::MOVING) {
+        controller->update();
+    }
     TEST_ASSERT_EQUAL(MotionState::IDLE, controller->getState());
     TEST_ASSERT_EQUAL_STRING("EVT:ARM_DONE", last_event);
 }

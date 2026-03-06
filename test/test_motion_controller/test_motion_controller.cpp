@@ -1,5 +1,7 @@
 #include <unity.h>
 #include "MotionController.h"
+#include "StepperEngine.h"
+#include "CoordinateMapper.h"
 #include "MockMotorDriver.h"
 #include "MockLimitSwitch.h"
 #include "SafetyMonitor.h"
@@ -58,8 +60,9 @@ void test_arm_home_transitions_to_moving_and_completes(void) {
     TEST_ASSERT_EQUAL(MotionState::MOVING, controller->getState());
 
     // Position doesn't matter for ARM_HOME during execution, but it resets at the end
-
-    controller->update();
+    while (controller->getState() == MotionState::MOVING) {
+        controller->update();
+    }
     TEST_ASSERT_EQUAL(MotionState::IDLE, controller->getState());
     TEST_ASSERT_EQUAL_STRING("EVT:ARM_HOMED", last_event);
 }
@@ -73,15 +76,19 @@ void test_arm_move_to_valid_cartesians(void) {
     controller->execute(cmd);
     TEST_ASSERT_EQUAL(MotionState::MOVING, controller->getState());
 
-    mock_encoders[0].setPosition(100);
+    mock_encoders[0].setPosition(CoordinateMapper::steps_from_mm(CoordinateMapper::AXIS_X, 100.0f));
 
-    controller->update();
+    while (controller->getState() == MotionState::MOVING) {
+        controller->update();
+    }
     TEST_ASSERT_EQUAL(MotionState::IDLE, controller->getState());
     TEST_ASSERT_EQUAL_STRING("EVT:ARM_DONE", last_event);
 
     // verify mock drivers triggered
     TEST_ASSERT_EQUAL(1, drivers[0].enable_calls);
-    TEST_ASSERT_EQUAL(1, drivers[0].disable_calls);
+    // actually it's disabled twice, once by StepperEngine when moving=false, and once by MotionController::update
+    TEST_ASSERT_EQUAL(2, drivers[0].disable_calls);
+    TEST_ASSERT_EQUAL(CoordinateMapper::steps_from_mm(CoordinateMapper::AXIS_X, 100.0f), drivers[0].step_calls);
 }
 
 void test_arm_move_to_out_of_range_cartesian(void) {
@@ -108,7 +115,9 @@ void test_tool_dock_completes(void) {
 
     mock_encoders[5].setPosition(10); // tool seq step
 
-    controller->update();
+    while (controller->getState() == MotionState::MOVING) {
+        controller->update();
+    }
     TEST_ASSERT_EQUAL(MotionState::IDLE, controller->getState());
     TEST_ASSERT_EQUAL_STRING("EVT:TOOL_DOCKED:tool=CAMERA", last_event);
 }
@@ -123,7 +132,9 @@ void test_tool_release_completes(void) {
 
     mock_encoders[5].setPosition(10); // tool seq step
 
-    controller->update();
+    while (controller->getState() == MotionState::MOVING) {
+        controller->update();
+    }
     TEST_ASSERT_EQUAL(MotionState::IDLE, controller->getState());
     TEST_ASSERT_EQUAL_STRING("EVT:TOOL_RELEASED:tool=CAMERA", last_event);
 }
@@ -138,7 +149,9 @@ void test_tool_release_misaligned_emits_fault(void) {
 
     mock_encoders[5].setPosition(10); // tool seq step
 
-    controller->update();
+    while (controller->getState() == MotionState::MOVING) {
+        controller->update();
+    }
     TEST_ASSERT_EQUAL(MotionState::FAULT, controller->getState());
     TEST_ASSERT_EQUAL_STRING("EVT:TOOL_FAULT:code=ALIGNMENT_ERROR", last_event);
 }
@@ -191,7 +204,10 @@ void test_multiple_commands_queued_and_executed(void) {
 
     // Queue is full now (4 commands: 1 active, 3 queued, wait: CAPACITY is 4, so 3 queued is fine)
     // Send 5th command, should emit QUEUE_FULL
-    Command cmd5; cmd5.type = CommandType::ARM_MOVE_TO;
+    Command cmd5;
+    cmd5.type = CommandType::ARM_MOVE_TO;
+    cmd5.has_x = true;
+    cmd5.x = 100.0f;
     Command cmd6; cmd6.type = CommandType::ARM_HOME;
 
     // Execute cmd5, it gets queued (queue has 4 items now)
@@ -202,25 +218,48 @@ void test_multiple_commands_queued_and_executed(void) {
     TEST_ASSERT_EQUAL_STRING("EVT:ARM_FAULT:code=QUEUE_FULL:tier=soft", last_event);
 
     // Now complete cmd1
-    controller->update(); // Completes ARM_HOME, dequeues GRIPPER_OPEN, state is MOVING again
+    while (controller->getState() == MotionState::MOVING && strncmp(last_event, "EVT:ARM_HOMED", 13) != 0) {
+        controller->update();
+    }
+    // Since queue auto-dequeues on done, we need to call update() one more time to fetch and start the next command
+    controller->update();
+
+    // Command 2 starts automatically
     TEST_ASSERT_EQUAL(MotionState::MOVING, controller->getState());
-    // EVT:ARM_DONE should be emitted, but wait, last_event is overwritten during update if process_command calls anything? No, process_command doesn't emit anything on success. But update() emitted EVT:ARM_DONE first, so last_event is EVT:ARM_DONE.
-    // However, wait, in process_command, mock driver enable is called.
 
     // Complete cmd2
-    controller->update(); // Completes GRIPPER_OPEN, dequeues GRIPPER_CLOSE
+    mock_encoders[5].setPosition(mock_encoders[5].getPosition() + 10);
+    while (controller->getState() == MotionState::MOVING && strncmp(last_event, "EVT:ARM_DONE", 12) != 0) {
+        controller->update();
+    }
+    // Command 3 starts automatically (after processing last event, but we have to call update one more time to dequeue the next cmd)
+    controller->update();
     TEST_ASSERT_EQUAL(MotionState::MOVING, controller->getState());
 
     // Complete cmd3
-    controller->update(); // Completes GRIPPER_CLOSE, dequeues WRIST_SET
+    mock_encoders[5].setPosition(mock_encoders[5].getPosition() + 10);
+    while (controller->getState() == MotionState::MOVING && strncmp(last_event, "EVT:ARM_DONE", 12) != 0) {
+        controller->update();
+    }
+    // Command 4 starts automatically
+    controller->update();
     TEST_ASSERT_EQUAL(MotionState::MOVING, controller->getState());
 
     // Complete cmd4
-    controller->update(); // Completes WRIST_SET, dequeues ARM_MOVE_TO
+    while (controller->getState() == MotionState::MOVING && strncmp(last_event, "EVT:WRIST_DONE", 14) != 0) {
+        controller->update();
+    }
+    // Command 5 starts automatically
+    controller->update();
     TEST_ASSERT_EQUAL(MotionState::MOVING, controller->getState());
 
     // Complete cmd5
-    controller->update(); // Completes ARM_MOVE_TO, queue empty
+    mock_encoders[0].setPosition(mock_encoders[0].getPosition() + CoordinateMapper::steps_from_mm(CoordinateMapper::AXIS_X, 100.0f)); // assuming cmd5 had X
+    while (controller->getState() == MotionState::MOVING && strncmp(last_event, "EVT:ARM_DONE", 12) != 0) {
+        controller->update();
+    }
+    // Command 5 is finished
+    controller->update();
     TEST_ASSERT_EQUAL(MotionState::IDLE, controller->getState());
 }
 
