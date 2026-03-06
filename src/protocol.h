@@ -25,6 +25,7 @@
 
 // ── Outbound events  (arm_controller → backend) ──────────────────────────────
 // Emitted as: EVT:<NAME>[:<key>=<value>]*\n
+#define EVT_ARM_BOOT        "EVT:ARM_BOOT"
 #define EVT_ARM_HOMED       "EVT:ARM_HOMED"
 #define EVT_ARM_DONE        "EVT:ARM_DONE"
 #define EVT_WRIST_DONE      "EVT:WRIST_DONE"

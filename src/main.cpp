@@ -56,6 +56,9 @@ static uint8_t  g_line_len   = 0;
 static uint32_t g_last_hb_ms = 0;
 uint32_t g_last_ping_ms = 0;
 
+extern SafetyMonitor g_safety_monitor; // Defined in protocol.cpp
+extern MotionController g_motion_controller;
+
 // cppcheck-suppress unusedFunction
 void setup() {
     Serial.begin(SERIAL_BAUD, SERIAL_8N1);
@@ -66,11 +69,12 @@ void setup() {
     g_last_ping_ms = millis();
 
     // Initialise motor drivers, limit-switch pins here
-    protocol_emit_event("EVT:BOOT:fw=arm_controller:v=0.1.0");
-}
+    protocol_emit_event(EVT_ARM_BOOT ":fw=arm_controller:v=0.1.0");
 
-extern SafetyMonitor g_safety_monitor; // Defined in protocol.cpp
-extern MotionController g_motion_controller;
+    Command cmd;
+    cmd.type = CommandType::ARM_HOME;
+    g_motion_controller.execute(cmd);
+}
 
 // cppcheck-suppress unusedFunction
 void loop() {
