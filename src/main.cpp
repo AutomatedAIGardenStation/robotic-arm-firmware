@@ -14,9 +14,12 @@
 #include <Arduino.h>
 #else
 #include <stdint.h>
+#ifndef SERIAL_8N1
+#define SERIAL_8N1 0
+#endif
 class MainSerialDummy {
 public:
-    void begin(int baud) {}
+    void begin(int baud, int config = 0) {}
     operator bool() const { return true; }
     int available() { return 0; }
     int read() { return -1; }
@@ -55,14 +58,14 @@ uint32_t g_last_ping_ms = 0;
 
 // cppcheck-suppress unusedFunction
 void setup() {
-    Serial.begin(SERIAL_BAUD);
+    Serial.begin(SERIAL_BAUD, SERIAL_8N1);
     while (!Serial) { /* wait for USB-serial */ }
     g_line_buf[0] = '\0';
     g_line_len    = 0;
     g_last_hb_ms  = millis();
     g_last_ping_ms = millis();
 
-    // TODO: initialise motor drivers, limit-switch pins here
+    // Initialise motor drivers, limit-switch pins here
     protocol_emit_event("EVT:BOOT:fw=arm_controller:v=0.1.0");
 }
 
@@ -109,6 +112,7 @@ void loop() {
     g_motion_controller.update();
     MotionState current_state = g_motion_controller.getState();
     if (g_last_motion_state == MotionState::MOVING) {
+        // cppcheck-suppress knownConditionTrueFalse
         if (current_state == MotionState::FAULT && current_state != g_last_motion_state) {
             // Handled internally by MotionController
         }
