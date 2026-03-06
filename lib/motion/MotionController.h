@@ -24,6 +24,7 @@ public:
     void execute(const Command& cmd);
     MotionState getState() const;
     void update(); // call periodically to process moves/buffered commands
+    bool hasHardFault() const;
 
     // Exposed for testing purposes
     Command current_cmd;
@@ -45,6 +46,13 @@ private:
     CommandQueue queue;
 
     void process_command(const Command& cmd);
+
+    // Soft fault tracking
+    uint32_t soft_fault_timestamps[3];
+    uint8_t soft_fault_count;
+
+    void emitSoftFault(const char* code);
+    uint32_t get_millis();
 };
 
 #endif // MOTION_CONTROLLER_H

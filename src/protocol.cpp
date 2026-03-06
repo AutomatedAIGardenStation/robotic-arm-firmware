@@ -230,6 +230,12 @@ bool protocol_handle_line(const char* line) {
         return true;
     }
     if (cmd_match(cmd_start, CMD_ARM_CLEAR_FAULT, cmd_len)) {
+        if (g_motion_controller.hasHardFault()) {
+            Serial.print("NACK:");
+            Serial.print(seq_str);
+            Serial.println(":UNSAFE");
+            return false;
+        }
         emit_ack();
         Command cmd;
         cmd.type = CommandType::ARM_CLEAR_FAULT;
