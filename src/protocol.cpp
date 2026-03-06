@@ -24,10 +24,13 @@ static ProtocolSerialDummy Serial;
 #include "../lib/motion/MotionController.h"
 #include "../lib/motion/MockMotorDriver.h"
 #include "../lib/safety/MockLimitSwitch.h"
+#include "../lib/hal/boards/ArduinoMotorDriver.h"
+#include "../lib/hal/boards/ArduinoLimitSwitch.h"
 #include "../lib/safety/SafetyMonitor.h"
 #include "../lib/motion/EncoderReader.h"
 #include "../lib/motion/MockEncoder.h"
 #include "../../config/Config.h"
+#include "../../config/pins.h"
 
 extern uint32_t g_last_ping_ms;
 
@@ -41,10 +44,52 @@ void protocol_ping_received() {
 }
 
 // Instantiate drivers and controller globally
+#ifdef ARDUINO
+ArduinoMotorDriver g_drivers[6] = {
+#if defined(ARDUINO_ESP32_DEV)
+    ArduinoMotorDriver(PIN_J1_STEP, PIN_J1_DIR, -1),
+    ArduinoMotorDriver(PIN_J2_STEP, PIN_J2_DIR, -1),
+    ArduinoMotorDriver(-1, -1, -1),
+    ArduinoMotorDriver(-1, -1, -1),
+    ArduinoMotorDriver(-1, -1, -1),
+    ArduinoMotorDriver(-1, -1, -1)
+#else
+    ArduinoMotorDriver(PIN_J1_STEP, PIN_J1_DIR, PIN_J1_EN),
+    ArduinoMotorDriver(PIN_J2_STEP, PIN_J2_DIR, PIN_J2_EN),
+    ArduinoMotorDriver(PIN_J3_STEP, PIN_J3_DIR, PIN_J3_EN),
+    ArduinoMotorDriver(PIN_J4_STEP, PIN_J4_DIR, PIN_J4_EN),
+    ArduinoMotorDriver(PIN_J5_STEP, PIN_J5_DIR, PIN_J5_EN),
+    ArduinoMotorDriver(PIN_J6_STEP, PIN_J6_DIR, PIN_J6_EN)
+#endif
+};
+#else
 MockMotorDriver g_drivers[6];
+#endif
+
 IMotorDriver* g_driver_ptrs[6] = { &g_drivers[0], &g_drivers[1], &g_drivers[2], &g_drivers[3], &g_drivers[4], &g_drivers[5] };
 
+#ifdef ARDUINO
+ArduinoLimitSwitch g_limit_switches[6] = {
+#if defined(ARDUINO_ESP32_DEV)
+    ArduinoLimitSwitch(PIN_LS_J1_MIN),
+    ArduinoLimitSwitch(-1),
+    ArduinoLimitSwitch(-1),
+    ArduinoLimitSwitch(-1),
+    ArduinoLimitSwitch(-1),
+    ArduinoLimitSwitch(-1)
+#else
+    ArduinoLimitSwitch(PIN_LS_J1_MIN),
+    ArduinoLimitSwitch(PIN_LS_J2_MIN),
+    ArduinoLimitSwitch(PIN_LS_J3_MIN),
+    ArduinoLimitSwitch(PIN_LS_J4_MIN),
+    ArduinoLimitSwitch(PIN_LS_J5_MIN),
+    ArduinoLimitSwitch(PIN_LS_J6_MIN)
+#endif
+};
+#else
 MockLimitSwitch g_limit_switches[6];
+#endif
+
 ILimitSwitch* g_limit_switch_ptrs[6] = { &g_limit_switches[0], &g_limit_switches[1], &g_limit_switches[2], &g_limit_switches[3], &g_limit_switches[4], &g_limit_switches[5] };
 
 MockEncoder g_encoders[6];
