@@ -13,12 +13,16 @@ public:
     bool clearFault();
     void triggerFault();
 
+    void setHomingMode(bool enabled);
+    bool isLimitTriggered(int axis_index) const;
+
 private:
     void brakeAll();
 
     ILimitSwitch* switches[6];
     IMotorDriver* drivers[6];
     bool system_fault;
+    bool homing_mode;
 };
 
 #endif // SAFETY_MONITOR_H

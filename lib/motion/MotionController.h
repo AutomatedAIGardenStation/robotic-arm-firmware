@@ -13,6 +13,7 @@
 enum class MotionState {
     IDLE,
     MOVING,
+    HOMING,
     FAULT
 };
 
@@ -38,6 +39,8 @@ private:
     int32_t expected_steps[6];
     bool active_joints[6];
     CommandType current_command_type;
+    uint8_t homing_stage; // 0=Idle, 1=Homing Z, 2=Homing X/Y
+    bool is_homed;
 
     CommandQueue queue;
 

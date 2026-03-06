@@ -54,10 +54,20 @@ void setUp(void) {
     Command cmd;
     cmd.type = CommandType::ARM_HOME;
     g_motion_controller.execute(cmd);
-    while (g_motion_controller.getState() == MotionState::MOVING) {
-        g_motion_controller.update();
+
+    // Fake homing limits for test so it resets to IDLE
+    g_motion_controller.update();
+    g_limit_switches[2].setTriggered(true);
+    g_motion_controller.update();
+    g_limit_switches[0].setTriggered(true);
+    g_limit_switches[1].setTriggered(true);
+    g_motion_controller.update();
+
+    for (int i=0; i<6; i++) {
+        g_limit_switches[i].setTriggered(false);
     }
-    Serial.clear(); // clear ARM_DONE from HOME
+
+    Serial.clear(); // clear HOMED
 }
 
 void tearDown(void) {
