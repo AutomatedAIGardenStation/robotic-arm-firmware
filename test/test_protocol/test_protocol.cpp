@@ -65,7 +65,7 @@ void tearDown(void) {
 
 void test_arm_move_to_parsing(void) {
     Serial.clear();
-    char buf[128] = "0002:ARM_MOVE_TO:x=100.5:y=200.0:z=50.2:";
+    char buf[128] = "0002:ARM_MOVE_TO:100.5:200.0:50.2:";
     uint8_t expected_crc = crc8_compute(buf, strlen(buf));
     sprintf(buf + strlen(buf), "CRC=%02X\n", expected_crc);
 

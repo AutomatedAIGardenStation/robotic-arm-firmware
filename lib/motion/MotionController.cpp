@@ -35,7 +35,7 @@ void MotionController::execute(const Command& cmd) {
             state = MotionState::IDLE;
             protocol_emit_event("EVT:ARM_FAULT_CLEARED");
         } else {
-            protocol_emit_event("EVT:ARM_FAULT:code=LIMIT_ACTIVE");
+            protocol_emit_event("EVT:ARM_FAULT:code=LIMIT_ACTIVE:tier=hard");
         }
         return;
     }
@@ -43,11 +43,11 @@ void MotionController::execute(const Command& cmd) {
     if (safety_monitor && safety_monitor->isFaulted()) {
         if (cmd.type == CommandType::ARM_HOME) {
             if (!safety_monitor->clearFault()) {
-                protocol_emit_event("EVT:ARM_FAULT:code=LIMIT_ACTIVE");
+                protocol_emit_event("EVT:ARM_FAULT:code=LIMIT_ACTIVE:tier=hard");
                 return;
             }
         } else {
-            protocol_emit_event("EVT:ARM_FAULT:code=LIMIT_HIT");
+            protocol_emit_event("EVT:ARM_FAULT:code=LIMIT_HIT:tier=hard");
             return;
         }
     }
@@ -58,7 +58,7 @@ void MotionController::execute(const Command& cmd) {
 
     if (state == MotionState::MOVING) {
         if (!queue.enqueue(cmd)) {
-            protocol_emit_event("EVT:ARM_FAULT:code=QUEUE_FULL");
+            protocol_emit_event("EVT:ARM_FAULT:code=QUEUE_FULL:tier=soft");
         }
         return;
     }
@@ -71,24 +71,24 @@ void MotionController::process_command(const Command& cmd) {
 
     if (cmd.type == CommandType::ARM_MOVE_TO) {
         if (cmd.has_x && !CoordinateMapper::is_in_range(CoordinateMapper::AXIS_X, cmd.x)) {
-            protocol_emit_event("EVT:ARM_FAULT:code=OUT_OF_RANGE");
+            protocol_emit_event("EVT:ARM_FAULT:code=OUT_OF_RANGE:tier=soft");
             return;
         }
         if (cmd.has_y && !CoordinateMapper::is_in_range(CoordinateMapper::AXIS_Y, cmd.y)) {
-            protocol_emit_event("EVT:ARM_FAULT:code=OUT_OF_RANGE");
+            protocol_emit_event("EVT:ARM_FAULT:code=OUT_OF_RANGE:tier=soft");
             return;
         }
         if (cmd.has_z && !CoordinateMapper::is_in_range(CoordinateMapper::AXIS_Z, cmd.z)) {
-            protocol_emit_event("EVT:ARM_FAULT:code=OUT_OF_RANGE");
+            protocol_emit_event("EVT:ARM_FAULT:code=OUT_OF_RANGE:tier=soft");
             return;
         }
     } else if (cmd.type == CommandType::WRIST_SET) {
         if (cmd.has_pitch && !CoordinateMapper::is_in_range(CoordinateMapper::WRIST_PITCH, cmd.pitch)) {
-            protocol_emit_event("EVT:ARM_FAULT:code=OUT_OF_RANGE");
+            protocol_emit_event("EVT:ARM_FAULT:code=OUT_OF_RANGE:tier=soft");
             return;
         }
         if (cmd.has_roll && !CoordinateMapper::is_in_range(CoordinateMapper::WRIST_ROLL, cmd.roll)) {
-            protocol_emit_event("EVT:ARM_FAULT:code=OUT_OF_RANGE");
+            protocol_emit_event("EVT:ARM_FAULT:code=OUT_OF_RANGE:tier=soft");
             return;
         }
     }
@@ -144,7 +144,7 @@ void MotionController::update() {
 
         if (position_mismatch) {
             state = MotionState::FAULT;
-            protocol_emit_event("EVT:ARM_FAULT:code=POSITION_MISMATCH");
+            protocol_emit_event("EVT:ARM_FAULT:code=POSITION_MISMATCH:tier=hard");
             return;
         }
 
@@ -172,7 +172,7 @@ void MotionController::update() {
             // Check for mock alignment error
             if (strncmp(current_cmd.tool_name, "MISALIGNED", 10) == 0) {
                 state = MotionState::FAULT;
-                protocol_emit_event("EVT:TOOL_FAULT:reason=ALIGNMENT_ERROR");
+                protocol_emit_event("EVT:TOOL_FAULT:code=ALIGNMENT_ERROR");
                 return;
             } else {
                 // To keep the buffer small, construct the string manually

@@ -92,7 +92,7 @@ void test_arm_move_to_out_of_range_cartesian(void) {
 
     controller->execute(cmd);
     TEST_ASSERT_EQUAL(MotionState::IDLE, controller->getState());
-    TEST_ASSERT_EQUAL_STRING("EVT:ARM_FAULT:code=OUT_OF_RANGE", last_event);
+    TEST_ASSERT_EQUAL_STRING("EVT:ARM_FAULT:code=OUT_OF_RANGE:tier=soft", last_event);
 
     // verify mock drivers not triggered
     TEST_ASSERT_EQUAL(0, drivers[0].enable_calls);
@@ -140,7 +140,7 @@ void test_tool_release_misaligned_emits_fault(void) {
 
     controller->update();
     TEST_ASSERT_EQUAL(MotionState::FAULT, controller->getState());
-    TEST_ASSERT_EQUAL_STRING("EVT:TOOL_FAULT:reason=ALIGNMENT_ERROR", last_event);
+    TEST_ASSERT_EQUAL_STRING("EVT:TOOL_FAULT:code=ALIGNMENT_ERROR", last_event);
 }
 
 void test_arm_home_when_faulted_clears_fault_and_executes(void) {
@@ -170,7 +170,7 @@ void test_arm_home_when_faulted_emits_limit_active_if_still_pressed(void) {
     controller->execute(cmd);
 
     TEST_ASSERT_TRUE(monitor->isFaulted());
-    TEST_ASSERT_EQUAL_STRING("EVT:ARM_FAULT:code=LIMIT_ACTIVE", last_event);
+    TEST_ASSERT_EQUAL_STRING("EVT:ARM_FAULT:code=LIMIT_ACTIVE:tier=hard", last_event);
     TEST_ASSERT_EQUAL(MotionState::IDLE, controller->getState());
 }
 
@@ -199,7 +199,7 @@ void test_multiple_commands_queued_and_executed(void) {
 
     // Execute cmd6, it should be rejected because queue is full
     controller->execute(cmd6);
-    TEST_ASSERT_EQUAL_STRING("EVT:ARM_FAULT:code=QUEUE_FULL", last_event);
+    TEST_ASSERT_EQUAL_STRING("EVT:ARM_FAULT:code=QUEUE_FULL:tier=soft", last_event);
 
     // Now complete cmd1
     controller->update(); // Completes ARM_HOME, dequeues GRIPPER_OPEN, state is MOVING again

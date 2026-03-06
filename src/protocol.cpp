@@ -154,6 +154,7 @@ bool protocol_handle_line(const char* line) {
             buffer[copy_len] = '\0';
 
             const char* token = strtok(buffer, ":");
+            int param_index = 0;
             while (token != nullptr) {
                 if (strncmp(token, "x=", 2) == 0) {
                     cmd.x = atof(token + 2);
@@ -164,7 +165,19 @@ bool protocol_handle_line(const char* line) {
                 } else if (strncmp(token, "z=", 2) == 0) {
                     cmd.z = atof(token + 2);
                     cmd.has_z = true;
+                } else if (strchr(token, '=') == nullptr) {
+                    if (param_index == 0) {
+                        cmd.x = atof(token);
+                        cmd.has_x = true;
+                    } else if (param_index == 1) {
+                        cmd.y = atof(token);
+                        cmd.has_y = true;
+                    } else if (param_index == 2) {
+                        cmd.z = atof(token);
+                        cmd.has_z = true;
+                    }
                 }
+                param_index++;
                 token = strtok(nullptr, ":");
             }
         }

@@ -105,7 +105,7 @@ void loop() {
     if ((now - g_last_ping_ms) > WATCHDOG_MS) {
         if (!g_safety_monitor.isFaulted()) {
             g_safety_monitor.triggerFault();
-            protocol_emit_event("EVT:ARM_FAULT:code=WATCHDOG_TIMEOUT");
+            protocol_emit_event("EVT:ARM_FAULT:code=WATCHDOG_TIMEOUT:tier=hard");
         }
     }
 

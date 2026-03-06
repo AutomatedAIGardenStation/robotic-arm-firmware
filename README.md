@@ -88,7 +88,7 @@ arm_controller/
 | `EVT:ARM_FAULT_CLEARED` | Soft fault cleared — firmware re-homing |
 | `EVT:TOOL_DOCKED:tool=<name>` | Tool successfully docked at station |
 | `EVT:TOOL_RELEASED:tool=<name>` | Tool picked up and secured |
-| `EVT:TOOL_FAULT:reason=<code>` | Tool change failed (ALIGNMENT_ERROR, LOCK_FAIL, SLOT_EMPTY) |
+| `EVT:TOOL_FAULT:code=<code>` | Tool change failed (ALIGNMENT_ERROR, LOCK_FAIL, SLOT_EMPTY) |
 | `EVT:HEARTBEAT:status=OK` | Periodic heartbeat |
 
 ---

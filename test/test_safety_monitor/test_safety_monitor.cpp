@@ -82,7 +82,7 @@ void test_motion_controller_rejects_moves_when_faulted_with_limit_hit(void) {
     cmd.type = CommandType::ARM_MOVE_TO;
     controller->execute(cmd);
 
-    TEST_ASSERT_EQUAL_STRING("EVT:ARM_FAULT:code=LIMIT_HIT", last_event);
+    TEST_ASSERT_EQUAL_STRING("EVT:ARM_FAULT:code=LIMIT_HIT:tier=hard", last_event);
     TEST_ASSERT_EQUAL(MotionState::IDLE, controller->getState());
 }
 

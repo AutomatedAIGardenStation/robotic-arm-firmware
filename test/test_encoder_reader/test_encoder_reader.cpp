@@ -97,7 +97,7 @@ void test_motion_controller_emits_fault_when_deviated(void) {
 
     controller->update();
     TEST_ASSERT_EQUAL(MotionState::FAULT, controller->getState());
-    TEST_ASSERT_EQUAL_STRING("EVT:ARM_FAULT:code=POSITION_MISMATCH", last_event);
+    TEST_ASSERT_EQUAL_STRING("EVT:ARM_FAULT:code=POSITION_MISMATCH:tier=hard", last_event);
 }
 
 void test_motion_controller_emits_done_within_tolerance(void) {
