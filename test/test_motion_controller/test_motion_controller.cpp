@@ -421,6 +421,129 @@ void test_arm_clear_fault_triggers_homing(void) {
     TEST_ASSERT_EQUAL(MotionState::HOMING, controller->getState());
 }
 
+void test_wrist_set_completes(void) {
+    // Need to home first
+    Command home_cmd;
+    home_cmd.type = CommandType::ARM_HOME;
+    controller->execute(home_cmd);
+    controller->update();
+    switches[2].setTriggered(true);
+    controller->update();
+    switches[0].setTriggered(true);
+    switches[1].setTriggered(true);
+    controller->update();
+
+    Command cmd;
+    cmd.type = CommandType::WRIST_SET;
+    cmd.has_pitch = true;
+    cmd.pitch = 45.0f;
+
+    controller->execute(cmd);
+    TEST_ASSERT_EQUAL(MotionState::MOVING, controller->getState());
+
+    // Update encoders for wrist (axis 3 and 4) to reach target
+    mock_encoders[3].setPosition(CoordinateMapper::steps_from_degrees(CoordinateMapper::WRIST_PITCH, 45.0f));
+
+    while (controller->getState() == MotionState::MOVING) {
+        controller->update();
+    }
+    TEST_ASSERT_EQUAL(MotionState::IDLE, controller->getState());
+    TEST_ASSERT_EQUAL_STRING("EVT:WRIST_DONE", last_event);
+}
+
+void test_gripper_open_completes(void) {
+    // Need to home first
+    Command home_cmd;
+    home_cmd.type = CommandType::ARM_HOME;
+    controller->execute(home_cmd);
+    controller->update();
+    switches[2].setTriggered(true);
+    controller->update();
+    switches[0].setTriggered(true);
+    switches[1].setTriggered(true);
+    controller->update();
+
+    Command cmd;
+    cmd.type = CommandType::GRIPPER_OPEN;
+
+    controller->execute(cmd);
+    TEST_ASSERT_EQUAL(MotionState::MOVING, controller->getState());
+
+    // Update encoder since it's a tool sequence step
+    mock_encoders[5].setPosition(10);
+    while (controller->getState() == MotionState::MOVING) {
+        controller->update();
+    }
+    TEST_ASSERT_EQUAL(MotionState::IDLE, controller->getState());
+    TEST_ASSERT_EQUAL_STRING("EVT:ARM_DONE", last_event);
+}
+
+void test_gripper_close_completes(void) {
+    // Need to home first
+    Command home_cmd;
+    home_cmd.type = CommandType::ARM_HOME;
+    controller->execute(home_cmd);
+    controller->update();
+    switches[2].setTriggered(true);
+    controller->update();
+    switches[0].setTriggered(true);
+    switches[1].setTriggered(true);
+    controller->update();
+
+    Command cmd;
+    cmd.type = CommandType::GRIPPER_CLOSE;
+
+    controller->execute(cmd);
+    TEST_ASSERT_EQUAL(MotionState::MOVING, controller->getState());
+
+    // Update encoder since it's a tool sequence step
+    mock_encoders[5].setPosition(10);
+    while (controller->getState() == MotionState::MOVING) {
+        controller->update();
+    }
+    TEST_ASSERT_EQUAL(MotionState::IDLE, controller->getState());
+    TEST_ASSERT_EQUAL_STRING("EVT:ARM_DONE", last_event);
+}
+
+void test_limit_hit_during_move_emits_hard_fault(void) {
+    // Need to home first
+    Command home_cmd;
+    home_cmd.type = CommandType::ARM_HOME;
+    controller->execute(home_cmd);
+    controller->update();
+    switches[2].setTriggered(true);
+    controller->update();
+    switches[0].setTriggered(true);
+    switches[1].setTriggered(true);
+    controller->update();
+
+    // Release limits after homing
+    for (int i = 0; i < 6; i++) {
+        switches[i].setTriggered(false);
+    }
+    last_event[0] = '\0';
+
+    // Command a move
+    Command cmd;
+    cmd.type = CommandType::ARM_MOVE_TO;
+    cmd.has_x = true;
+    cmd.x = 100.0f;
+    controller->execute(cmd);
+
+    TEST_ASSERT_EQUAL(MotionState::MOVING, controller->getState());
+
+    // Simulate hitting a limit switch during movement
+    switches[0].setTriggered(true);
+
+    // Call update to process the safety monitor and the fault
+    // SafetyMonitor needs to be polled
+    monitor->poll();
+    controller->update();
+
+    TEST_ASSERT_EQUAL(MotionState::FAULT, controller->getState());
+    TEST_ASSERT_EQUAL_STRING("EVT:ARM_FAULT:code=LIMIT_HIT:tier=hard", last_event);
+}
+
 int main(int argc, char **argv) {
     UNITY_BEGIN();
     RUN_TEST(test_initial_state_is_idle);
@@ -437,5 +560,9 @@ int main(int argc, char **argv) {
     RUN_TEST(test_soft_fault_escalation_within_time_window);
     RUN_TEST(test_soft_fault_no_escalation_outside_time_window);
     RUN_TEST(test_arm_clear_fault_triggers_homing);
+    RUN_TEST(test_wrist_set_completes);
+    RUN_TEST(test_gripper_open_completes);
+    RUN_TEST(test_gripper_close_completes);
+    RUN_TEST(test_limit_hit_during_move_emits_hard_fault);
     return UNITY_END();
 }
