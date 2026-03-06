@@ -245,6 +245,13 @@ void MotionController::update() {
     if (state == MotionState::MOVING) {
         engine.update();
 
+        if (safety_monitor && safety_monitor->isFaulted()) {
+            state = MotionState::FAULT;
+            is_homed = false; // Lost position tracking
+            protocol_emit_event("EVT:ARM_FAULT:code=LIMIT_HIT:tier=hard");
+            return;
+        }
+
         if (engine.isMoving()) {
             return;
         }
