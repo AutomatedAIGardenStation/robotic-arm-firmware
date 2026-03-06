@@ -15,6 +15,8 @@ MotionController::MotionController(IMotorDriver* drvs[6], SafetyMonitor* safety,
     is_homed = false;
     safety_monitor = safety;
     this->encoder_reader = encoder_reader;
+    soft_fault_count = 0;
+    for (int i = 0; i < 3; i++) soft_fault_timestamps[i] = 0;
 
     for (int i = 0; i < 6; i++) {
         if (drvs) {
@@ -32,14 +34,33 @@ MotionState MotionController::getState() const {
     return state;
 }
 
+bool MotionController::hasHardFault() const {
+    if (state == MotionState::FAULT) {
+        return true;
+    }
+    if (safety_monitor && safety_monitor->isFaulted()) {
+        return true;
+    }
+    return false;
+}
+
 void MotionController::execute(const Command& cmd) {
     if (cmd.type == CommandType::ARM_CLEAR_FAULT) {
-        if (safety_monitor && safety_monitor->clearFault()) {
-            state = MotionState::IDLE;
-            protocol_emit_event("EVT:ARM_FAULT_CLEARED");
-        } else {
+        // Soft fault cleared only if there's no hard fault
+        // SafetyMonitor limits and REPEATED_FAULT are hard faults.
+        if (hasHardFault()) {
             protocol_emit_event("EVT:ARM_FAULT:code=LIMIT_ACTIVE:tier=hard");
+            return;
         }
+
+        soft_fault_count = 0;
+        for (int i = 0; i < 3; i++) soft_fault_timestamps[i] = 0;
+
+        protocol_emit_event("EVT:ARM_FAULT_CLEARED");
+
+        Command home_cmd;
+        home_cmd.type = CommandType::ARM_HOME;
+        process_command(home_cmd);
         return;
     }
 
@@ -61,7 +82,7 @@ void MotionController::execute(const Command& cmd) {
 
     if (state == MotionState::MOVING || state == MotionState::HOMING) {
         if (!queue.enqueue(cmd)) {
-            protocol_emit_event("EVT:ARM_FAULT:code=QUEUE_FULL:tier=soft");
+            emitSoftFault("QUEUE_FULL");
         }
         return;
     }
@@ -74,28 +95,28 @@ void MotionController::process_command(const Command& cmd) {
 
     if (cmd.type == CommandType::ARM_MOVE_TO) {
         if (!is_homed) {
-            protocol_emit_event("EVT:ARM_FAULT:code=UNHOMED:tier=soft");
+            emitSoftFault("UNHOMED");
             return;
         }
         if (cmd.has_x && !CoordinateMapper::is_in_range(CoordinateMapper::AXIS_X, cmd.x)) {
-            protocol_emit_event("EVT:ARM_FAULT:code=OUT_OF_RANGE:tier=soft");
+            emitSoftFault("OUT_OF_RANGE");
             return;
         }
         if (cmd.has_y && !CoordinateMapper::is_in_range(CoordinateMapper::AXIS_Y, cmd.y)) {
-            protocol_emit_event("EVT:ARM_FAULT:code=OUT_OF_RANGE:tier=soft");
+            emitSoftFault("OUT_OF_RANGE");
             return;
         }
         if (cmd.has_z && !CoordinateMapper::is_in_range(CoordinateMapper::AXIS_Z, cmd.z)) {
-            protocol_emit_event("EVT:ARM_FAULT:code=OUT_OF_RANGE:tier=soft");
+            emitSoftFault("OUT_OF_RANGE");
             return;
         }
     } else if (cmd.type == CommandType::WRIST_SET) {
         if (cmd.has_pitch && !CoordinateMapper::is_in_range(CoordinateMapper::WRIST_PITCH, cmd.pitch)) {
-            protocol_emit_event("EVT:ARM_FAULT:code=OUT_OF_RANGE:tier=soft");
+            emitSoftFault("OUT_OF_RANGE");
             return;
         }
         if (cmd.has_roll && !CoordinateMapper::is_in_range(CoordinateMapper::WRIST_ROLL, cmd.roll)) {
-            protocol_emit_event("EVT:ARM_FAULT:code=OUT_OF_RANGE:tier=soft");
+            emitSoftFault("OUT_OF_RANGE");
             return;
         }
     }
@@ -293,5 +314,56 @@ void MotionController::update() {
         if (queue.dequeue(next_cmd)) {
             process_command(next_cmd);
         }
+    }
+}
+
+#include <stdio.h> // for snprintf
+#ifdef ARDUINO
+#include <Arduino.h>
+#endif
+
+uint32_t MotionController::get_millis() {
+#ifdef ARDUINO
+    return millis();
+#else
+    extern uint32_t g_mock_millis;
+    return g_mock_millis;
+#endif
+}
+
+void MotionController::emitSoftFault(const char* code) {
+    uint32_t now = get_millis();
+
+    // Clean up old faults (> 5 minutes = 300,000 ms)
+    uint8_t new_count = 0;
+    uint32_t new_timestamps[3] = {0, 0, 0};
+    for (int i = 0; i < soft_fault_count; i++) {
+        if (now - soft_fault_timestamps[i] <= 300000) {
+            new_timestamps[new_count++] = soft_fault_timestamps[i];
+        }
+    }
+
+    for (int i = 0; i < 3; i++) {
+        soft_fault_timestamps[i] = new_timestamps[i];
+    }
+    soft_fault_count = new_count;
+
+    if (soft_fault_count < 3) {
+        soft_fault_timestamps[soft_fault_count++] = now;
+    }
+
+    if (soft_fault_count == 1) {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "EVT:ARM_FAULT:code=%s:tier=soft", code);
+        protocol_emit_event(buf);
+    } else if (soft_fault_count == 2) {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "EVT:ARM_FAULT:code=%s:tier=soft:repeat=2", code);
+        protocol_emit_event(buf);
+    } else if (soft_fault_count >= 3) {
+        soft_fault_count = 0;
+        state = MotionState::FAULT;
+        is_homed = false;
+        protocol_emit_event("EVT:ARM_FAULT:code=REPEATED_FAULT:tier=hard");
     }
 }

@@ -8,6 +8,8 @@
 #include "MockEncoder.h"
 #include <string.h>
 
+extern uint32_t g_mock_millis;
+
 MockMotorDriver drivers[6];
 IMotorDriver* driver_ptrs[6];
 MockLimitSwitch switches[6];
@@ -40,6 +42,7 @@ void setUp(void) {
     monitor = new SafetyMonitor(switch_ptrs, driver_ptrs);
     controller = new MotionController(driver_ptrs, monitor, reader);
     last_event[0] = '\0';
+    g_mock_millis = 0;
 }
 
 void tearDown(void) {
@@ -317,6 +320,107 @@ void test_multiple_commands_queued_and_executed(void) {
     TEST_ASSERT_EQUAL(MotionState::IDLE, controller->getState());
 }
 
+void test_soft_fault_escalation_within_time_window(void) {
+    // Need to home first
+    Command home_cmd;
+    home_cmd.type = CommandType::ARM_HOME;
+    controller->execute(home_cmd);
+    controller->update();
+    switches[2].setTriggered(true);
+    controller->update();
+    switches[0].setTriggered(true);
+    switches[1].setTriggered(true);
+    controller->update();
+
+    Command cmd;
+    cmd.type = CommandType::ARM_MOVE_TO;
+    cmd.has_x = true;
+    cmd.x = 2000.0f; // out of range soft fault
+
+    // Initial state
+    g_mock_millis = 1000;
+    controller->execute(cmd);
+    TEST_ASSERT_EQUAL_STRING("EVT:ARM_FAULT:code=OUT_OF_RANGE:tier=soft", last_event);
+    TEST_ASSERT_EQUAL(MotionState::IDLE, controller->getState());
+
+    // 2nd fault within 5 min (300,000 ms)
+    g_mock_millis = 1000 + 100000; // +100 seconds
+    controller->execute(cmd);
+    TEST_ASSERT_EQUAL_STRING("EVT:ARM_FAULT:code=OUT_OF_RANGE:tier=soft:repeat=2", last_event);
+    TEST_ASSERT_EQUAL(MotionState::IDLE, controller->getState());
+
+    // 3rd fault within 5 min of the 1st
+    g_mock_millis = 1000 + 200000; // +200 seconds
+    controller->execute(cmd);
+    TEST_ASSERT_EQUAL_STRING("EVT:ARM_FAULT:code=REPEATED_FAULT:tier=hard", last_event);
+    TEST_ASSERT_EQUAL(MotionState::FAULT, controller->getState());
+}
+
+void test_soft_fault_no_escalation_outside_time_window(void) {
+    // Need to home first
+    Command home_cmd;
+    home_cmd.type = CommandType::ARM_HOME;
+    controller->execute(home_cmd);
+    controller->update();
+    switches[2].setTriggered(true);
+    controller->update();
+    switches[0].setTriggered(true);
+    switches[1].setTriggered(true);
+    controller->update();
+
+    Command cmd;
+    cmd.type = CommandType::ARM_MOVE_TO;
+    cmd.has_x = true;
+    cmd.x = 2000.0f; // out of range soft fault
+
+    // 1st fault
+    g_mock_millis = 1000;
+    controller->execute(cmd);
+    TEST_ASSERT_EQUAL_STRING("EVT:ARM_FAULT:code=OUT_OF_RANGE:tier=soft", last_event);
+
+    // 2nd fault
+    g_mock_millis = 1000 + 100000;
+    controller->execute(cmd);
+    TEST_ASSERT_EQUAL_STRING("EVT:ARM_FAULT:code=OUT_OF_RANGE:tier=soft:repeat=2", last_event);
+
+    // Wait > 5 minutes from 1st fault (1000 + 300000 + 1)
+    g_mock_millis = 1000 + 300001;
+    controller->execute(cmd);
+    // Since the 1st fault expired, this becomes the 2nd fault (since the 2nd fault is still in window)
+    TEST_ASSERT_EQUAL_STRING("EVT:ARM_FAULT:code=OUT_OF_RANGE:tier=soft:repeat=2", last_event);
+    TEST_ASSERT_EQUAL(MotionState::IDLE, controller->getState());
+}
+
+void test_arm_clear_fault_triggers_homing(void) {
+    // Need to home first
+    Command home_cmd;
+    home_cmd.type = CommandType::ARM_HOME;
+    controller->execute(home_cmd);
+    controller->update();
+    switches[2].setTriggered(true);
+    controller->update();
+    switches[0].setTriggered(true);
+    switches[1].setTriggered(true);
+    controller->update();
+
+    // Generate a soft fault to clear
+    Command cmd;
+    cmd.type = CommandType::ARM_MOVE_TO;
+    cmd.has_x = true;
+    cmd.x = 2000.0f;
+    controller->execute(cmd);
+    TEST_ASSERT_EQUAL_STRING("EVT:ARM_FAULT:code=OUT_OF_RANGE:tier=soft", last_event);
+
+    // Clear fault
+    Command clear_cmd;
+    clear_cmd.type = CommandType::ARM_CLEAR_FAULT;
+    controller->execute(clear_cmd);
+
+    // EVT:ARM_FAULT_CLEARED should be emitted during execution
+    // And ARM_HOME should be processed automatically
+    TEST_ASSERT_EQUAL(MotionState::HOMING, controller->getState());
+}
+
 int main(int argc, char **argv) {
     UNITY_BEGIN();
     RUN_TEST(test_initial_state_is_idle);
@@ -330,5 +434,8 @@ int main(int argc, char **argv) {
     RUN_TEST(test_arm_home_when_faulted_clears_fault_and_executes);
     RUN_TEST(test_arm_home_when_faulted_emits_limit_active_if_still_pressed);
     RUN_TEST(test_multiple_commands_queued_and_executed);
+    RUN_TEST(test_soft_fault_escalation_within_time_window);
+    RUN_TEST(test_soft_fault_no_escalation_outside_time_window);
+    RUN_TEST(test_arm_clear_fault_triggers_homing);
     return UNITY_END();
 }
