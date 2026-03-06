@@ -1,0 +1,476 @@
+name: Jules Session Monitor
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+  issues:
+    types: [labeled]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: jules-session-monitor-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  poll:
+    if: |
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issues' && github.event.label.name == 'agent-processing') ||
+      (github.event_name == 'issue_comment' && startsWith(github.event.comment.body || '', '/jules'))
+    runs-on: [self-hosted, Windows]
+    env:
+      JULES_PROXY_URL: ${{ secrets.JULES_PROXY_URL }}
+      JULES_PROXY_SECRET: ${{ secrets.JULES_PROXY_SECRET }}
+      JULES_AUTO_APPROVE_PLAN: ${{ vars.JULES_AUTO_APPROVE_PLAN }}
+      JULES_DEFAULT_FEEDBACK_PROMPT: ${{ vars.JULES_DEFAULT_FEEDBACK_PROMPT }}
+    steps:
+      - name: Poll active Jules sessions in this repository
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.REPO_ACCESS_TOKEN || github.token }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const proxyUrl = (process.env.JULES_PROXY_URL || '').trim().replace(/\/$/, '');
+            const proxySecret = (process.env.JULES_PROXY_SECRET || '').trim();
+            const autoApprovePlan = (process.env.JULES_AUTO_APPROVE_PLAN || 'true').toLowerCase() !== 'false';
+            const defaultFeedbackPrompt = (process.env.JULES_DEFAULT_FEEDBACK_PROMPT || '').trim();
+
+            if (!proxyUrl || !proxySecret) {
+              core.warning('JULES_PROXY_URL or JULES_PROXY_SECRET is not configured. Skipping Jules session poll.');
+              return;
+            }
+
+            function simpleHash(value) {
+              const input = String(value || '');
+              let hash = 0;
+              for (let i = 0; i < input.length; i++) {
+                hash = ((hash << 5) - hash) + input.charCodeAt(i);
+                hash |= 0;
+              }
+              return Math.abs(hash).toString(36);
+            }
+
+            async function retryWithRateLimit(fn, maxRetries = 3) {
+              for (let attempt = 0; attempt < maxRetries; attempt++) {
+                try {
+                  return await fn();
+                } catch (error) {
+                  if (error.status === 429 && attempt < maxRetries - 1) {
+                    await new Promise(resolve => setTimeout(resolve, (attempt + 1) * 2000));
+                    continue;
+                  }
+                  throw error;
+                }
+              }
+            }
+
+            async function callProxy(method, path, body = undefined) {
+              const headers = { 'X-Proxy-Secret': proxySecret };
+              const request = { method, headers };
+              if (body !== undefined) {
+                headers['Content-Type'] = 'application/json';
+                request.body = JSON.stringify(body);
+              }
+
+              const response = await fetch(`${proxyUrl}${path}`, request);
+              const text = await response.text();
+              let data = null;
+              if (text) {
+                try {
+                  data = JSON.parse(text);
+                } catch (error) {
+                  data = null;
+                }
+              }
+
+              return { ok: response.ok, status: response.status, data, text };
+            }
+
+            async function postIssueComment(issueNumber, lines) {
+              await retryWithRateLimit(async () => {
+                return await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number: issueNumber,
+                  body: lines.filter(Boolean).join('\n')
+                });
+              });
+            }
+
+            async function addIssueLabels(issueNumber, labels) {
+              if (!labels || labels.length === 0) return;
+              try {
+                await retryWithRateLimit(async () => {
+                  return await github.rest.issues.addLabels({
+                    owner,
+                    repo,
+                    issue_number: issueNumber,
+                    labels
+                  });
+                });
+              } catch (error) {
+                if (error.status !== 422) {
+                  core.warning(`Could not add labels to issue #${issueNumber}: ${error.message}`);
+                }
+              }
+            }
+
+            async function removeIssueLabel(issueNumber, labelName) {
+              try {
+                await retryWithRateLimit(async () => {
+                  return await github.rest.issues.removeLabel({
+                    owner,
+                    repo,
+                    issue_number: issueNumber,
+                    name: labelName
+                  });
+                });
+              } catch (error) {
+                if (error.status !== 404) {
+                  core.warning(`Could not remove label ${labelName} from issue #${issueNumber}: ${error.message}`);
+                }
+              }
+            }
+
+            async function getIssueBody(issueNumber) {
+              const issueResp = await retryWithRateLimit(async () => {
+                return await github.rest.issues.get({ owner, repo, issue_number: issueNumber });
+              });
+              return String(issueResp.data?.body || '');
+            }
+
+            async function updateIssueBody(issueNumber, body) {
+              await retryWithRateLimit(async () => {
+                return await github.rest.issues.update({ owner, repo, issue_number: issueNumber, body });
+              });
+            }
+
+            function parseJulesReplyCommand(body) {
+              const text = body || '';
+              const match = text.match(/^\s*\/jules\b([\s\S]*)$/i);
+              if (!match) return null;
+              const prompt = (match[1] || '').trim();
+              return prompt || null;
+            }
+
+            function extractLatestAgentMessage(activities) {
+              if (!Array.isArray(activities)) return '';
+              for (let i = activities.length - 1; i >= 0; i--) {
+                const message = activities[i]?.agentMessaged?.agentMessage;
+                if (typeof message === 'string' && message.trim()) {
+                  return message.trim();
+                }
+              }
+              return '';
+            }
+
+            function extractMarkedSection(body, startMarker, endMarker) {
+              const text = String(body || '');
+              const start = text.indexOf(startMarker);
+              if (start === -1) return '';
+              const from = start + startMarker.length;
+              const end = text.indexOf(endMarker, from);
+              if (end === -1) return '';
+              return text.slice(from, end).trim();
+            }
+
+            function upsertMarkedSection(body, startMarker, endMarker, content) {
+              const text = String(body || '');
+              const section = `${startMarker}\n${String(content || '').trim()}\n${endMarker}`;
+              const start = text.indexOf(startMarker);
+              if (start === -1) {
+                return [text.trimEnd(), section].filter(Boolean).join('\n\n');
+              }
+              const from = start;
+              const contentStart = start + startMarker.length;
+              const end = text.indexOf(endMarker, contentStart);
+              if (end === -1) {
+                return [text.trimEnd(), section].filter(Boolean).join('\n\n');
+              }
+              const before = text.slice(0, from).trimEnd();
+              const after = text.slice(end + endMarker.length).trimStart();
+              return [before, section, after].filter(Boolean).join('\n\n');
+            }
+
+            const JULES_CLARIFICATION_START = '<!-- jules-clarification:start -->';
+            const JULES_CLARIFICATION_END = '<!-- jules-clarification:end -->';
+            const JULES_REPLY_START = '<!-- jules-reply:start -->';
+            const JULES_REPLY_END = '<!-- jules-reply:end -->';
+            const JULES_REPLY_PLACEHOLDER = '<write answer for Jules here>';
+
+            function parseReplyFromIssueBody(body) {
+              const section = extractMarkedSection(body, JULES_REPLY_START, JULES_REPLY_END);
+              if (!section) return '';
+              return section.replace(JULES_REPLY_PLACEHOLDER, '').trim();
+            }
+
+            const issuesResponse = await retryWithRateLimit(async () => {
+              return await github.rest.issues.listForRepo({
+                owner,
+                repo,
+                state: 'open',
+                labels: 'agent-processing',
+                sort: 'updated',
+                direction: 'desc',
+                per_page: 20
+              });
+            });
+
+            const activeIssues = (issuesResponse.data || []).filter(issue => {
+              if (issue.pull_request) return false;
+              const labels = issue.labels.map(label => label.name);
+              return !labels.includes('agent-completed');
+            }).slice(0, 1);
+
+            if (activeIssues.length === 0) {
+              console.log('No active agent-processing issues in this repository.');
+              return;
+            }
+
+            for (const issue of activeIssues) {
+              const commentsResp = await retryWithRateLimit(async () => {
+                return await github.rest.issues.listComments({ owner, repo, issue_number: issue.number, per_page: 100 });
+              });
+              const comments = commentsResp.data || [];
+
+              let sessionId = null;
+              for (const comment of comments) {
+                const body = comment.body || '';
+                const match = body.match(/JulesSessionId:\s*([^\s]+)/i);
+                if (match && match[1]) {
+                  sessionId = match[1].trim();
+                  break;
+                }
+              }
+
+              if (!sessionId) {
+                console.log(`Issue #${issue.number}: JulesSessionId was not found in comments.`);
+                continue;
+              }
+
+              const encodedId = encodeURIComponent(sessionId);
+              const sessionResp = await callProxy('GET', `/v1alpha/sessions/${encodedId}`);
+              if (!sessionResp.ok) {
+                core.warning(`Issue #${issue.number}: failed to read Jules session ${sessionId} (HTTP ${sessionResp.status}).`);
+                continue;
+              }
+
+              const sessionData = sessionResp.data || {};
+              const sessionState = sessionData.state || 'STATE_UNSPECIFIED';
+              const sessionUpdateTime = sessionData.updateTime || '';
+              console.log(`Issue #${issue.number}: Jules state = ${sessionState}`);
+
+              if (sessionState === 'AWAITING_PLAN_APPROVAL') {
+                const approvalToken = `JulesPlanApproval:${sessionId}:${simpleHash(sessionUpdateTime || 'no-update-time')}`;
+                const alreadyHandled = comments.some(comment => (comment.body || '').includes(approvalToken));
+
+                if (!alreadyHandled) {
+                  if (autoApprovePlan) {
+                    const approveResp = await callProxy('POST', `/v1alpha/sessions/${encodedId}:approvePlan`);
+                    if (approveResp.ok) {
+                      await postIssueComment(issue.number, [
+                        '@jules',
+                        '',
+                        '**Jules plan approved automatically (repo-local workflow)**',
+                        `JulesSessionId: ${sessionId}`,
+                        `ApprovalToken: ${approvalToken}`
+                      ]);
+                    } else {
+                      await postIssueComment(issue.number, [
+                        '@jules',
+                        '',
+                        '**Jules requires plan approval (auto-approve failed)**',
+                        `JulesSessionId: ${sessionId}`,
+                        `HTTP status: ${approveResp.status}`,
+                        `ApprovalToken: ${approvalToken}`
+                      ]);
+                    }
+                  } else {
+                    await postIssueComment(issue.number, [
+                      '@jules',
+                      '',
+                      '**Jules requires plan approval**',
+                      `JulesSessionId: ${sessionId}`,
+                      `ApprovalToken: ${approvalToken}`
+                    ]);
+                  }
+                }
+                continue;
+              }
+
+              if (sessionState === 'AWAITING_USER_FEEDBACK') {
+                const activitiesResp = await callProxy('GET', `/v1alpha/sessions/${encodedId}/activities?pageSize=30`);
+                const activities = activitiesResp.ok && Array.isArray(activitiesResp.data?.activities)
+                  ? activitiesResp.data.activities
+                  : [];
+
+                const latestAgentMessage = extractLatestAgentMessage(activities);
+                const safeMessage = (latestAgentMessage || 'No detailed question found in Jules activities.').slice(0, 1500);
+
+                let issueBody = '';
+                try {
+                  issueBody = await getIssueBody(issue.number);
+                } catch (error) {
+                  core.warning(`Issue #${issue.number}: could not read issue body (${error.message}).`);
+                }
+
+                const clarificationBlock = [
+                  '### Jules Clarification (Auto)',
+                  `- Session: ${sessionId}`,
+                  `- State: ${sessionState}`,
+                  '',
+                  'Question from Jules:',
+                  '```text',
+                  safeMessage,
+                  '```',
+                  '',
+                  'How to answer:',
+                  '- Comment on this issue: `/jules <your answer>`',
+                  `- Or fill text between markers ${JULES_REPLY_START} ... ${JULES_REPLY_END}`
+                ].join('\n');
+
+                let desiredIssueBody = upsertMarkedSection(
+                  issueBody,
+                  JULES_CLARIFICATION_START,
+                  JULES_CLARIFICATION_END,
+                  clarificationBlock
+                );
+
+                if (!extractMarkedSection(desiredIssueBody, JULES_REPLY_START, JULES_REPLY_END)) {
+                  desiredIssueBody = upsertMarkedSection(
+                    desiredIssueBody,
+                    JULES_REPLY_START,
+                    JULES_REPLY_END,
+                    JULES_REPLY_PLACEHOLDER
+                  );
+                }
+
+                if (desiredIssueBody !== issueBody) {
+                  try {
+                    await updateIssueBody(issue.number, desiredIssueBody);
+                    issueBody = desiredIssueBody;
+                  } catch (error) {
+                    core.warning(`Issue #${issue.number}: could not update issue body (${error.message}).`);
+                  }
+                }
+
+                let pendingReply = null;
+
+                const latestReplyComment = [...comments].reverse().find(comment => {
+                  if (comment.user?.type === 'Bot') return false;
+                  return !!parseJulesReplyCommand(comment.body || '');
+                });
+
+                if (latestReplyComment) {
+                  const prompt = parseJulesReplyCommand(latestReplyComment.body || '');
+                  const replyToken = `JulesReplyFromCommentId:${latestReplyComment.id}`;
+                  const alreadySent = comments.some(comment => (comment.body || '').includes(replyToken));
+                  if (prompt && !alreadySent) {
+                    pendingReply = { prompt, source: `comment #${latestReplyComment.id}`, token: replyToken };
+                  }
+                }
+
+                if (!pendingReply) {
+                  const bodyReply = parseReplyFromIssueBody(issueBody);
+                  if (bodyReply) {
+                    const replyToken = `JulesReplyFromIssueBody:${sessionId}:${simpleHash(bodyReply)}`;
+                    const alreadySent = comments.some(comment => (comment.body || '').includes(replyToken));
+                    if (!alreadySent) {
+                      pendingReply = { prompt: bodyReply, source: 'issue body', token: replyToken };
+                    }
+                  }
+                }
+
+                if (!pendingReply && defaultFeedbackPrompt) {
+                  const autoToken = `JulesAutoFeedback:${sessionId}:${simpleHash(sessionUpdateTime || latestAgentMessage || 'feedback')}`;
+                  const alreadyAutoSent = comments.some(comment => (comment.body || '').includes(autoToken));
+                  if (!alreadyAutoSent) {
+                    pendingReply = { prompt: defaultFeedbackPrompt, source: 'default policy', token: autoToken };
+                  }
+                }
+
+                if (pendingReply) {
+                  const sendResp = await callProxy('POST', `/v1alpha/sessions/${encodedId}:sendMessage`, { prompt: pendingReply.prompt });
+                  if (sendResp.ok) {
+                    await postIssueComment(issue.number, [
+                      '@jules',
+                      '',
+                      '**Reply sent to Jules session (repo-local workflow)**',
+                      `JulesSessionId: ${sessionId}`,
+                      `ReplySource: ${pendingReply.source}`,
+                      `ReplyToken: ${pendingReply.token}`
+                    ]);
+                    await removeIssueLabel(issue.number, 'agent-awaiting-input');
+
+                    if (pendingReply.source === 'issue body') {
+                      try {
+                        const latestBody = await getIssueBody(issue.number);
+                        const clearedBody = upsertMarkedSection(
+                          latestBody,
+                          JULES_REPLY_START,
+                          JULES_REPLY_END,
+                          JULES_REPLY_PLACEHOLDER
+                        );
+                        if (clearedBody !== latestBody) {
+                          await updateIssueBody(issue.number, clearedBody);
+                        }
+                      } catch (error) {
+                        core.warning(`Issue #${issue.number}: could not clear reply marker (${error.message}).`);
+                      }
+                    }
+                  } else {
+                    const failureToken = `JulesReplySendFailed:${pendingReply.token}`;
+                    const alreadyNotified = comments.some(comment => (comment.body || '').includes(failureToken));
+                    if (!alreadyNotified) {
+                      await postIssueComment(issue.number, [
+                        '@jules',
+                        '',
+                        '**Failed to send reply to Jules session**',
+                        `JulesSessionId: ${sessionId}`,
+                        `ReplySource: ${pendingReply.source}`,
+                        `HTTP status: ${sendResp.status}`,
+                        `FailureToken: ${failureToken}`
+                      ]);
+                    }
+                  }
+                  continue;
+                }
+
+                const waitingToken = `JulesAwaitingInput:${sessionId}:${simpleHash(latestAgentMessage || sessionUpdateTime || 'awaiting-feedback')}`;
+                const alreadyNotified = comments.some(comment => (comment.body || '').includes(waitingToken));
+
+                if (!alreadyNotified) {
+                  await postIssueComment(issue.number, [
+                    '@jules',
+                    '',
+                    '**Action required: Jules is waiting for your input in session**',
+                    `JulesSessionId: ${sessionId}`,
+                    `SessionState: ${sessionState}`,
+                    '',
+                    'Agent question/message:',
+                    '```',
+                    safeMessage,
+                    '```',
+                    '',
+                    'Reply in this issue with:',
+                    '`/jules <your answer>`',
+                    '',
+                    `AwaitingToken: ${waitingToken}`
+                  ]);
+                }
+
+                await addIssueLabels(issue.number, ['agent-awaiting-input']);
+                continue;
+              }
+
+              // Clear waiting label when Jules is not waiting for feedback anymore.
+              await removeIssueLabel(issue.number, 'agent-awaiting-input');
+            }
