@@ -15,10 +15,13 @@ extern int digitalRead(int pin);
 #endif
 
 ArduinoLimitSwitch::ArduinoLimitSwitch(int pin) : _pin(pin) {
-    pinMode(_pin, INPUT_PULLUP);
+    if (_pin >= 0) {
+        pinMode(_pin, INPUT_PULLUP);
+    }
 }
 
 bool ArduinoLimitSwitch::isTriggered() const {
+    if (_pin < 0) return false;
     // Assuming switches are Normally Closed (NC), pulled high, LOW when triggered.
     // Wait, the README says:
     // Limit switches (NC, pulled high – LOW = triggered)

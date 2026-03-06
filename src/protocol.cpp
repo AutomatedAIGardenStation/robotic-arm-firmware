@@ -46,12 +46,21 @@ void protocol_ping_received() {
 // Instantiate drivers and controller globally
 #ifdef ARDUINO
 ArduinoMotorDriver g_drivers[6] = {
+#if defined(ARDUINO_ESP32_DEV)
+    ArduinoMotorDriver(PIN_J1_STEP, PIN_J1_DIR, -1),
+    ArduinoMotorDriver(PIN_J2_STEP, PIN_J2_DIR, -1),
+    ArduinoMotorDriver(-1, -1, -1),
+    ArduinoMotorDriver(-1, -1, -1),
+    ArduinoMotorDriver(-1, -1, -1),
+    ArduinoMotorDriver(-1, -1, -1)
+#else
     ArduinoMotorDriver(PIN_J1_STEP, PIN_J1_DIR, PIN_J1_EN),
     ArduinoMotorDriver(PIN_J2_STEP, PIN_J2_DIR, PIN_J2_EN),
     ArduinoMotorDriver(PIN_J3_STEP, PIN_J3_DIR, PIN_J3_EN),
     ArduinoMotorDriver(PIN_J4_STEP, PIN_J4_DIR, PIN_J4_EN),
     ArduinoMotorDriver(PIN_J5_STEP, PIN_J5_DIR, PIN_J5_EN),
     ArduinoMotorDriver(PIN_J6_STEP, PIN_J6_DIR, PIN_J6_EN)
+#endif
 };
 #else
 MockMotorDriver g_drivers[6];
@@ -61,12 +70,21 @@ IMotorDriver* g_driver_ptrs[6] = { &g_drivers[0], &g_drivers[1], &g_drivers[2], 
 
 #ifdef ARDUINO
 ArduinoLimitSwitch g_limit_switches[6] = {
+#if defined(ARDUINO_ESP32_DEV)
+    ArduinoLimitSwitch(PIN_LS_J1_MIN),
+    ArduinoLimitSwitch(-1),
+    ArduinoLimitSwitch(-1),
+    ArduinoLimitSwitch(-1),
+    ArduinoLimitSwitch(-1),
+    ArduinoLimitSwitch(-1)
+#else
     ArduinoLimitSwitch(PIN_LS_J1_MIN),
     ArduinoLimitSwitch(PIN_LS_J2_MIN),
     ArduinoLimitSwitch(PIN_LS_J3_MIN),
     ArduinoLimitSwitch(PIN_LS_J4_MIN),
     ArduinoLimitSwitch(PIN_LS_J5_MIN),
     ArduinoLimitSwitch(PIN_LS_J6_MIN)
+#endif
 };
 #else
 MockLimitSwitch g_limit_switches[6];
