@@ -26,8 +26,18 @@ static ProtocolSerialDummy Serial;
 #include "../lib/safety/SafetyMonitor.h"
 #include "../lib/motion/EncoderReader.h"
 #include "../lib/motion/MockEncoder.h"
-#include "../lib/motion/ZoneRegistry.h"
 #include "../../config/Config.h"
+
+extern uint32_t g_last_ping_ms;
+
+void protocol_ping_received() {
+#ifdef ARDUINO
+    g_last_ping_ms = millis();
+#else
+    extern uint32_t millis();
+    g_last_ping_ms = millis();
+#endif
+}
 
 // Instantiate drivers and controller globally
 MockMotorDriver g_drivers[6];
@@ -51,166 +61,6 @@ static inline bool cmd_match(const char* line, const char* cmd, size_t line_len)
     if (line_len < cmd_len) return false;
     return strncmp(line, cmd, cmd_len) == 0
         && (line_len == cmd_len || line[cmd_len] == ':');
-}
-
-static void arm_move_zone(const char* param_str) {
-    if (!param_str) {
-        Serial.println("ERR:UNKNOWN_ZONE:");
-        return;
-    }
-
-    const char* zone_name = nullptr;
-    char buffer[128];
-    strncpy(buffer, param_str, sizeof(buffer) - 1);
-    buffer[sizeof(buffer) - 1] = '\0';
-
-    const char* token = strtok(buffer, ":");
-    while (token != nullptr) {
-        if (strncmp(token, "zone=", 5) == 0) {
-            zone_name = token + 5;
-            break;
-        }
-        token = strtok(nullptr, ":");
-    }
-
-    if (!zone_name) {
-        Serial.println("ERR:UNKNOWN_ZONE:");
-        return;
-    }
-
-    float angles[6];
-    if (resolve_zone(zone_name, angles)) {
-        Command cmd;
-        cmd.type = CommandType::ARM_MOVE_TO;
-        for (int i = 0; i < 6; i++) {
-            cmd.angles[i] = angles[i];
-            cmd.has_angle[i] = true;
-        }
-        g_motion_controller.execute(cmd);
-        // Motion controller will emit EVT:ARM_DONE when complete
-    } else {
-        Serial.print("ERR:UNKNOWN_ZONE:");
-        Serial.println(zone_name);
-    }
-}
-
-static bool wait_for_motion() {
-    // Let's check if the system is faulted before starting.
-    g_safety_monitor.poll();
-    if (g_safety_monitor.isFaulted()) {
-        protocol_emit_event("EVT:ARM_FAULT:code=SEQUENCE_ABORTED");
-        return false;
-    }
-
-    while (g_motion_controller.getState() == MotionState::MOVING) {
-        g_safety_monitor.poll();
-        if (g_safety_monitor.isFaulted()) {
-            protocol_emit_event("EVT:ARM_FAULT:code=SEQUENCE_ABORTED");
-            return false;
-        }
-        g_motion_controller.update();
-    }
-
-    // Also check if we entered FAULT state
-    if (g_motion_controller.getState() == MotionState::FAULT) {
-        protocol_emit_event("EVT:ARM_FAULT:code=SEQUENCE_ABORTED");
-        return false;
-    }
-    return true;
-}
-
-static bool arm_pollinate_sequence() {
-    float inspect_angles[6];
-    if (!resolve_zone("inspect", inspect_angles)) return false;
-
-    Command cmd_inspect;
-    cmd_inspect.type = CommandType::ARM_MOVE_TO;
-    for (int i = 0; i < 6; i++) {
-        cmd_inspect.angles[i] = inspect_angles[i];
-        cmd_inspect.has_angle[i] = true;
-    }
-    g_motion_controller.execute(cmd_inspect);
-    if (!wait_for_motion()) return false;
-
-    for (int cycle = 0; cycle < 3; cycle++) {
-        Command cmd_osc1;
-        cmd_osc1.type = CommandType::ARM_MOVE_TO;
-        for (int i = 0; i < 6; i++) {
-            cmd_osc1.angles[i] = inspect_angles[i];
-            cmd_osc1.has_angle[i] = true;
-        }
-        cmd_osc1.angles[2] += 5.0f; // j3 = index 2
-        g_motion_controller.execute(cmd_osc1);
-        if (!wait_for_motion()) return false;
-
-        delay(POLLINATE_CYCLE_MS);
-
-        Command cmd_osc2;
-        cmd_osc2.type = CommandType::ARM_MOVE_TO;
-        for (int i = 0; i < 6; i++) {
-            cmd_osc2.angles[i] = inspect_angles[i];
-            cmd_osc2.has_angle[i] = true;
-        }
-        cmd_osc2.angles[2] -= 5.0f; // j3 = index 2
-        g_motion_controller.execute(cmd_osc2);
-        if (!wait_for_motion()) return false;
-
-        delay(POLLINATE_CYCLE_MS);
-    }
-
-    float home_angles[6];
-    if (!resolve_zone("home", home_angles)) return false;
-
-    Command cmd_home;
-    cmd_home.type = CommandType::ARM_MOVE_TO;
-    for (int i = 0; i < 6; i++) {
-        cmd_home.angles[i] = home_angles[i];
-        cmd_home.has_angle[i] = true;
-    }
-    g_motion_controller.execute(cmd_home);
-    if (!wait_for_motion()) return false;
-
-    protocol_emit_event(EVT_ARM_DONE);
-    return true;
-}
-
-static bool arm_harvest_sequence() {
-    float harvest_angles[6];
-    if (!resolve_zone("harvest", harvest_angles)) return false;
-
-    Command cmd_harvest;
-    cmd_harvest.type = CommandType::ARM_MOVE_TO;
-    for (int i = 0; i < 6; i++) {
-        cmd_harvest.angles[i] = harvest_angles[i];
-        cmd_harvest.has_angle[i] = true;
-    }
-    g_motion_controller.execute(cmd_harvest);
-    if (!wait_for_motion()) return false;
-
-    Command cmd_close;
-    cmd_close.type = CommandType::GRIPPER_CLOSE;
-    g_motion_controller.execute(cmd_close);
-    if (!wait_for_motion()) return false;
-
-    float deposit_angles[6];
-    if (!resolve_zone("deposit", deposit_angles)) return false;
-
-    Command cmd_deposit;
-    cmd_deposit.type = CommandType::ARM_MOVE_TO;
-    for (int i = 0; i < 6; i++) {
-        cmd_deposit.angles[i] = deposit_angles[i];
-        cmd_deposit.has_angle[i] = true;
-    }
-    g_motion_controller.execute(cmd_deposit);
-    if (!wait_for_motion()) return false;
-
-    Command cmd_open;
-    cmd_open.type = CommandType::GRIPPER_OPEN;
-    g_motion_controller.execute(cmd_open);
-    if (!wait_for_motion()) return false;
-
-    protocol_emit_event(EVT_ARM_DONE);
-    return true;
 }
 
 // ── public API ───────────────────────────────────────────────────────────────
@@ -243,14 +93,44 @@ bool protocol_handle_line(const char* line) {
 
             const char* token = strtok(buffer, ":");
             while (token != nullptr) {
-                if (token[0] == 'j' || token[0] == 'J') {
-                    int joint_id = token[1] - '0';
-                    const char* val_str = strchr(token, '=');
-                    if (val_str && joint_id >= 1 && joint_id <= 6) {
-                        float degrees = atof(val_str + 1);
-                        cmd.angles[joint_id - 1] = degrees;
-                        cmd.has_angle[joint_id - 1] = true;
-                    }
+                if (strncmp(token, "x=", 2) == 0) {
+                    cmd.x = atof(token + 2);
+                    cmd.has_x = true;
+                } else if (strncmp(token, "y=", 2) == 0) {
+                    cmd.y = atof(token + 2);
+                    cmd.has_y = true;
+                } else if (strncmp(token, "z=", 2) == 0) {
+                    cmd.z = atof(token + 2);
+                    cmd.has_z = true;
+                }
+                token = strtok(nullptr, ":");
+            }
+        }
+        g_motion_controller.execute(cmd);
+        return true;
+    }
+    if (cmd_match(line, CMD_ARM_CLEAR_FAULT, len)) {
+        Command cmd;
+        cmd.type = CommandType::ARM_CLEAR_FAULT;
+        g_motion_controller.execute(cmd);
+        return true;
+    }
+    if (cmd_match(line, CMD_WRIST_SET, len)) {
+        Command cmd;
+        cmd.type = CommandType::WRIST_SET;
+        if (params) {
+            char buffer[128];
+            strncpy(buffer, params, sizeof(buffer) - 1);
+            buffer[sizeof(buffer) - 1] = '\0';
+
+            const char* token = strtok(buffer, ":");
+            while (token != nullptr) {
+                if (strncmp(token, "pitch=", 6) == 0) {
+                    cmd.pitch = atof(token + 6);
+                    cmd.has_pitch = true;
+                } else if (strncmp(token, "roll=", 5) == 0) {
+                    cmd.roll = atof(token + 5);
+                    cmd.has_roll = true;
                 }
                 token = strtok(nullptr, ":");
             }
@@ -270,16 +150,48 @@ bool protocol_handle_line(const char* line) {
         g_motion_controller.execute(cmd);
         return true;
     }
-    if (cmd_match(line, CMD_MOVE_ZONE, len)) {
-        arm_move_zone(params ? params : "");
+    if (cmd_match(line, CMD_TOOL_DOCK, len)) {
+        Command cmd;
+        cmd.type = CommandType::TOOL_DOCK;
+        if (params) {
+            char buffer[128];
+            strncpy(buffer, params, sizeof(buffer) - 1);
+            buffer[sizeof(buffer) - 1] = '\0';
+
+            const char* token = strtok(buffer, ":");
+            while (token != nullptr) {
+                if (strncmp(token, "tool=", 5) == 0) {
+                    strncpy(cmd.tool_name, token + 5, sizeof(cmd.tool_name) - 1);
+                    cmd.tool_name[sizeof(cmd.tool_name) - 1] = '\0';
+                }
+                token = strtok(nullptr, ":");
+            }
+        }
+        g_motion_controller.execute(cmd);
         return true;
     }
-    if (cmd_match(line, CMD_POLLINATE, len)) {
-        arm_pollinate_sequence();
+    if (cmd_match(line, CMD_TOOL_RELEASE, len)) {
+        Command cmd;
+        cmd.type = CommandType::TOOL_RELEASE;
+        if (params) {
+            char buffer[128];
+            strncpy(buffer, params, sizeof(buffer) - 1);
+            buffer[sizeof(buffer) - 1] = '\0';
+
+            const char* token = strtok(buffer, ":");
+            while (token != nullptr) {
+                if (strncmp(token, "tool=", 5) == 0) {
+                    strncpy(cmd.tool_name, token + 5, sizeof(cmd.tool_name) - 1);
+                    cmd.tool_name[sizeof(cmd.tool_name) - 1] = '\0';
+                }
+                token = strtok(nullptr, ":");
+            }
+        }
+        g_motion_controller.execute(cmd);
         return true;
     }
-    if (cmd_match(line, CMD_HARVEST, len)) {
-        arm_harvest_sequence();
+    if (cmd_match(line, CMD_PING, len)) {
+        protocol_ping_received();
         return true;
     }
     if (cmd_match(line, CMD_NOP, len)) {

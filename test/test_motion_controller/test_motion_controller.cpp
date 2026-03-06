@@ -61,14 +61,14 @@ void test_arm_home_transitions_to_moving_and_completes(void) {
 
     controller->update();
     TEST_ASSERT_EQUAL(MotionState::IDLE, controller->getState());
-    TEST_ASSERT_EQUAL_STRING("EVT:ARM_DONE", last_event);
+    TEST_ASSERT_EQUAL_STRING("EVT:ARM_HOMED", last_event);
 }
 
-void test_arm_move_to_valid_angles(void) {
+void test_arm_move_to_valid_cartesians(void) {
     Command cmd;
     cmd.type = CommandType::ARM_MOVE_TO;
-    cmd.has_angle[0] = true;
-    cmd.angles[0] = 90.0f; // valid yaw
+    cmd.has_x = true;
+    cmd.x = 100.0f;
 
     controller->execute(cmd);
     TEST_ASSERT_EQUAL(MotionState::MOVING, controller->getState());
@@ -84,11 +84,11 @@ void test_arm_move_to_valid_angles(void) {
     TEST_ASSERT_EQUAL(1, drivers[0].disable_calls);
 }
 
-void test_arm_move_to_out_of_range_angle(void) {
+void test_arm_move_to_out_of_range_cartesian(void) {
     Command cmd;
     cmd.type = CommandType::ARM_MOVE_TO;
-    cmd.has_angle[0] = true;
-    cmd.angles[0] = 200.0f; // invalid yaw (> 180)
+    cmd.has_x = true;
+    cmd.x = 2000.0f; // invalid X (> 1000)
 
     controller->execute(cmd);
     TEST_ASSERT_EQUAL(MotionState::IDLE, controller->getState());
@@ -98,28 +98,49 @@ void test_arm_move_to_out_of_range_angle(void) {
     TEST_ASSERT_EQUAL(0, drivers[0].enable_calls);
 }
 
-void test_gripper_open_completes(void) {
+void test_tool_dock_completes(void) {
     Command cmd;
-    cmd.type = CommandType::GRIPPER_OPEN;
+    cmd.type = CommandType::TOOL_DOCK;
+    strcpy(cmd.tool_name, "CAMERA");
 
     controller->execute(cmd);
     TEST_ASSERT_EQUAL(MotionState::MOVING, controller->getState());
 
+    mock_encoders[5].setPosition(10); // tool seq step
+
     controller->update();
     TEST_ASSERT_EQUAL(MotionState::IDLE, controller->getState());
-    TEST_ASSERT_EQUAL_STRING("EVT:ARM_DONE", last_event);
+    TEST_ASSERT_EQUAL_STRING("EVT:TOOL_DOCKED:tool=CAMERA", last_event);
 }
 
-void test_gripper_close_completes(void) {
+void test_tool_release_completes(void) {
     Command cmd;
-    cmd.type = CommandType::GRIPPER_CLOSE;
+    cmd.type = CommandType::TOOL_RELEASE;
+    strcpy(cmd.tool_name, "CAMERA");
 
     controller->execute(cmd);
     TEST_ASSERT_EQUAL(MotionState::MOVING, controller->getState());
 
+    mock_encoders[5].setPosition(10); // tool seq step
+
     controller->update();
     TEST_ASSERT_EQUAL(MotionState::IDLE, controller->getState());
-    TEST_ASSERT_EQUAL_STRING("EVT:ARM_DONE", last_event);
+    TEST_ASSERT_EQUAL_STRING("EVT:TOOL_RELEASED:tool=CAMERA", last_event);
+}
+
+void test_tool_release_misaligned_emits_fault(void) {
+    Command cmd;
+    cmd.type = CommandType::TOOL_RELEASE;
+    strcpy(cmd.tool_name, "MISALIGNED");
+
+    controller->execute(cmd);
+    TEST_ASSERT_EQUAL(MotionState::MOVING, controller->getState());
+
+    mock_encoders[5].setPosition(10); // tool seq step
+
+    controller->update();
+    TEST_ASSERT_EQUAL(MotionState::FAULT, controller->getState());
+    TEST_ASSERT_EQUAL_STRING("EVT:TOOL_FAULT:reason=ALIGNMENT_ERROR", last_event);
 }
 
 void test_arm_home_when_faulted_clears_fault_and_executes(void) {
@@ -157,7 +178,7 @@ void test_multiple_commands_queued_and_executed(void) {
     Command cmd1; cmd1.type = CommandType::ARM_HOME;
     Command cmd2; cmd2.type = CommandType::GRIPPER_OPEN;
     Command cmd3; cmd3.type = CommandType::GRIPPER_CLOSE;
-    Command cmd4; cmd4.type = CommandType::H1;
+    Command cmd4; cmd4.type = CommandType::WRIST_SET;
 
     // Send first command, should transition to MOVING
     controller->execute(cmd1);
@@ -191,11 +212,11 @@ void test_multiple_commands_queued_and_executed(void) {
     TEST_ASSERT_EQUAL(MotionState::MOVING, controller->getState());
 
     // Complete cmd3
-    controller->update(); // Completes GRIPPER_CLOSE, dequeues H1
+    controller->update(); // Completes GRIPPER_CLOSE, dequeues WRIST_SET
     TEST_ASSERT_EQUAL(MotionState::MOVING, controller->getState());
 
     // Complete cmd4
-    controller->update(); // Completes H1, dequeues ARM_MOVE_TO
+    controller->update(); // Completes WRIST_SET, dequeues ARM_MOVE_TO
     TEST_ASSERT_EQUAL(MotionState::MOVING, controller->getState());
 
     // Complete cmd5
@@ -207,10 +228,11 @@ int main(int argc, char **argv) {
     UNITY_BEGIN();
     RUN_TEST(test_initial_state_is_idle);
     RUN_TEST(test_arm_home_transitions_to_moving_and_completes);
-    RUN_TEST(test_arm_move_to_valid_angles);
-    RUN_TEST(test_arm_move_to_out_of_range_angle);
-    RUN_TEST(test_gripper_open_completes);
-    RUN_TEST(test_gripper_close_completes);
+    RUN_TEST(test_arm_move_to_valid_cartesians);
+    RUN_TEST(test_arm_move_to_out_of_range_cartesian);
+    RUN_TEST(test_tool_dock_completes);
+    RUN_TEST(test_tool_release_completes);
+    RUN_TEST(test_tool_release_misaligned_emits_fault);
     RUN_TEST(test_arm_home_when_faulted_clears_fault_and_executes);
     RUN_TEST(test_arm_home_when_faulted_emits_limit_active_if_still_pressed);
     RUN_TEST(test_multiple_commands_queued_and_executed);

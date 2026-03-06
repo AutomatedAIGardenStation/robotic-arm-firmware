@@ -23,6 +23,9 @@ public:
     MotionState getState() const;
     void update(); // call periodically to process moves/buffered commands
 
+    // Exposed for testing purposes
+    Command current_cmd;
+
 private:
     MotionState state;
     IMotorDriver* drivers[6];

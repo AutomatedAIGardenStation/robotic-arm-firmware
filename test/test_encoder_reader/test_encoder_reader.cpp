@@ -71,13 +71,12 @@ void test_reset_all_sets_mocks_to_zero(void) {
 void test_motion_controller_emits_arm_done_when_matched(void) {
     Command cmd;
     cmd.type = CommandType::ARM_MOVE_TO;
-    cmd.has_angle[0] = true;
-    cmd.angles[0] = 90.0f;
+    cmd.has_x = true;
+    cmd.x = 90.0f;
 
     controller->execute(cmd);
 
     // In MockMotorDriver, we step by 100 for valid targets in ARM_MOVE_TO.
-    // Wait, let's just make the mock encoder match the expected steps.
     mock_encoders[0].setPosition(100);
 
     controller->update();
@@ -88,8 +87,8 @@ void test_motion_controller_emits_arm_done_when_matched(void) {
 void test_motion_controller_emits_fault_when_deviated(void) {
     Command cmd;
     cmd.type = CommandType::ARM_MOVE_TO;
-    cmd.has_angle[0] = true;
-    cmd.angles[0] = 90.0f;
+    cmd.has_x = true;
+    cmd.x = 90.0f;
 
     controller->execute(cmd);
 
@@ -104,8 +103,8 @@ void test_motion_controller_emits_fault_when_deviated(void) {
 void test_motion_controller_emits_done_within_tolerance(void) {
     Command cmd;
     cmd.type = CommandType::ARM_MOVE_TO;
-    cmd.has_angle[0] = true;
-    cmd.angles[0] = 90.0f;
+    cmd.has_x = true;
+    cmd.x = 90.0f;
 
     controller->execute(cmd);
 

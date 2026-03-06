@@ -11,6 +11,7 @@ public:
     void poll();
     bool isFaulted() const;
     bool clearFault();
+    void triggerFault();
 
 private:
     void brakeAll();
