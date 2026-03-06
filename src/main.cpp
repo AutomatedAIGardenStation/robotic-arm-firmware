@@ -30,6 +30,10 @@ extern uint32_t millis();
 #include "protocol.h"
 
 #ifndef ARDUINO
+// Forward declarations for native build
+void setup();
+void loop();
+
 // cppcheck-suppress unusedFunction
 int main(int argc, char **argv) {
     setup();
