@@ -47,6 +47,11 @@ bool SafetyMonitor::clearFault() {
     return true;
 }
 
+void SafetyMonitor::triggerFault() {
+    system_fault = true;
+    brakeAll();
+}
+
 void SafetyMonitor::brakeAll() {
     for (int i = 0; i < 6; i++) {
         if (drivers[i]) {

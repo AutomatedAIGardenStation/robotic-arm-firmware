@@ -5,55 +5,50 @@
 
 class CoordinateMapper {
 public:
-    // Joint IDs
-    static const uint8_t JOINT_YAW = 1;
-    static const uint8_t JOINT_SHOULDER = 2;
-    static const uint8_t JOINT_ELBOW = 3;
-    static const uint8_t JOINT_WRIST_ROLL = 4;
-    static const uint8_t JOINT_WRIST_PITCH = 5;
-    static const uint8_t JOINT_GRIPPER = 6;
+    // Axis IDs
+    static const uint8_t AXIS_X = 1;
+    static const uint8_t AXIS_Y = 2;
+    static const uint8_t AXIS_Z = 3;
+    static const uint8_t WRIST_PITCH = 4;
+    static const uint8_t WRIST_ROLL = 5;
 
-    // Joint constants: Steps per revolution, microstepping, and gear ratio
-    // Defaulting to typical 200 steps/rev, 16 microsteps, 1:1 gear ratio
-    static constexpr float STEPS_PER_REV_J1 = 200.0f;
-    static constexpr float MICROSTEPPING_J1 = 16.0f;
-    static constexpr float GEAR_RATIO_J1 = 1.0f;
+    // Linear axis constants: Steps per mm
+    static constexpr float STEPS_PER_MM_X = 40.0f;
+    static constexpr float STEPS_PER_MM_Y = 40.0f;
+    static constexpr float STEPS_PER_MM_Z = 40.0f;
 
-    static constexpr float STEPS_PER_REV_J2 = 200.0f;
-    static constexpr float MICROSTEPPING_J2 = 16.0f;
-    static constexpr float GEAR_RATIO_J2 = 1.0f;
+    // Rotary axis constants
+    static constexpr float STEPS_PER_REV_PITCH = 200.0f;
+    static constexpr float MICROSTEPPING_PITCH = 16.0f;
+    static constexpr float GEAR_RATIO_PITCH = 1.0f;
 
-    static constexpr float STEPS_PER_REV_J3 = 200.0f;
-    static constexpr float MICROSTEPPING_J3 = 16.0f;
-    static constexpr float GEAR_RATIO_J3 = 1.0f;
+    static constexpr float STEPS_PER_REV_ROLL = 200.0f;
+    static constexpr float MICROSTEPPING_ROLL = 16.0f;
+    static constexpr float GEAR_RATIO_ROLL = 1.0f;
 
-    static constexpr float STEPS_PER_REV_J4 = 200.0f;
-    static constexpr float MICROSTEPPING_J4 = 16.0f;
-    static constexpr float GEAR_RATIO_J4 = 1.0f;
-
-    static constexpr float STEPS_PER_REV_J5 = 200.0f;
-    static constexpr float MICROSTEPPING_J5 = 16.0f;
-    static constexpr float GEAR_RATIO_J5 = 1.0f;
-
-    static constexpr float STEPS_PER_REV_J6 = 200.0f;
-    static constexpr float MICROSTEPPING_J6 = 16.0f;
-    static constexpr float GEAR_RATIO_J6 = 1.0f;
+    /**
+     * @brief Converts linear distance (in mm) to signed step count.
+     * @param axis_id The linear axis to calculate for (1-3 for X, Y, Z)
+     * @param mm The linear distance in mm
+     * @return signed step count
+     */
+    static float steps_from_mm(uint8_t axis_id, float mm);
 
     /**
      * @brief Converts joint angular delta (in degrees) to signed step count.
-     * @param joint_id The joint to calculate for (1-6)
+     * @param axis_id The rotary axis to calculate for (4-5 for Pitch, Roll)
      * @param degrees The angular delta in degrees
      * @return signed step count
      */
-    static float steps_from_degrees(uint8_t joint_id, float degrees);
+    static float steps_from_degrees(uint8_t axis_id, float degrees);
 
     /**
-     * @brief Checks if the given angle is within the mechanical sanity limits of the joint.
-     * @param joint_id The joint to check (1-6)
-     * @param degrees The target angle in degrees
-     * @return true if the angle is within range, false otherwise
+     * @brief Checks if the given position/angle is within the mechanical sanity limits.
+     * @param axis_id The axis to check
+     * @param value The target position in mm or angle in degrees
+     * @return true if within range, false otherwise
      */
-    static bool is_in_range(uint8_t joint_id, float degrees);
+    static bool is_in_range(uint8_t axis_id, float value);
 };
 
 #endif // COORDINATE_MAPPER_H

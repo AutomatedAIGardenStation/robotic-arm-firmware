@@ -81,7 +81,7 @@ void test_queue_drains_correctly_cycles(void) {
     // Enqueue 3 more (head=1, tail=1, full)
     Command c3; c3.type = CommandType::GRIPPER_CLOSE;
     Command c4; c4.type = CommandType::ARM_MOVE_TO;
-    Command c5; c5.type = CommandType::H1;
+    Command c5; c5.type = CommandType::WRIST_SET;
 
     TEST_ASSERT_TRUE(queue.enqueue(c3));
     TEST_ASSERT_TRUE(queue.enqueue(c4));
@@ -92,7 +92,7 @@ void test_queue_drains_correctly_cycles(void) {
     TEST_ASSERT_TRUE(queue.dequeue(out)); TEST_ASSERT_EQUAL(CommandType::GRIPPER_OPEN, out.type);
     TEST_ASSERT_TRUE(queue.dequeue(out)); TEST_ASSERT_EQUAL(CommandType::GRIPPER_CLOSE, out.type);
     TEST_ASSERT_TRUE(queue.dequeue(out)); TEST_ASSERT_EQUAL(CommandType::ARM_MOVE_TO, out.type);
-    TEST_ASSERT_TRUE(queue.dequeue(out)); TEST_ASSERT_EQUAL(CommandType::H1, out.type);
+    TEST_ASSERT_TRUE(queue.dequeue(out)); TEST_ASSERT_EQUAL(CommandType::WRIST_SET, out.type);
 
     TEST_ASSERT_TRUE(queue.isEmpty());
 }

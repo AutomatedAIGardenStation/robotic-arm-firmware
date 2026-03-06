@@ -1,43 +1,43 @@
 #include "CoordinateMapper.h"
 
-float CoordinateMapper::steps_from_degrees(uint8_t joint_id, float degrees) {
+float CoordinateMapper::steps_from_mm(uint8_t axis_id, float mm) {
+    float steps_per_mm = 0.0f;
+
+    switch (axis_id) {
+        case AXIS_X:
+            steps_per_mm = STEPS_PER_MM_X;
+            break;
+        case AXIS_Y:
+            steps_per_mm = STEPS_PER_MM_Y;
+            break;
+        case AXIS_Z:
+            steps_per_mm = STEPS_PER_MM_Z;
+            break;
+        default:
+            return 0.0f; // Unknown or rotary axis
+    }
+
+    return mm * steps_per_mm;
+}
+
+float CoordinateMapper::steps_from_degrees(uint8_t axis_id, float degrees) {
     float steps_per_rev = 0.0f;
     float microstepping = 0.0f;
     float gear_ratio = 0.0f;
 
-    switch (joint_id) {
-        case JOINT_YAW:
-            steps_per_rev = STEPS_PER_REV_J1;
-            microstepping = MICROSTEPPING_J1;
-            gear_ratio = GEAR_RATIO_J1;
+    switch (axis_id) {
+        case WRIST_PITCH:
+            steps_per_rev = STEPS_PER_REV_PITCH;
+            microstepping = MICROSTEPPING_PITCH;
+            gear_ratio = GEAR_RATIO_PITCH;
             break;
-        case JOINT_SHOULDER:
-            steps_per_rev = STEPS_PER_REV_J2;
-            microstepping = MICROSTEPPING_J2;
-            gear_ratio = GEAR_RATIO_J2;
-            break;
-        case JOINT_ELBOW:
-            steps_per_rev = STEPS_PER_REV_J3;
-            microstepping = MICROSTEPPING_J3;
-            gear_ratio = GEAR_RATIO_J3;
-            break;
-        case JOINT_WRIST_ROLL:
-            steps_per_rev = STEPS_PER_REV_J4;
-            microstepping = MICROSTEPPING_J4;
-            gear_ratio = GEAR_RATIO_J4;
-            break;
-        case JOINT_WRIST_PITCH:
-            steps_per_rev = STEPS_PER_REV_J5;
-            microstepping = MICROSTEPPING_J5;
-            gear_ratio = GEAR_RATIO_J5;
-            break;
-        case JOINT_GRIPPER:
-            steps_per_rev = STEPS_PER_REV_J6;
-            microstepping = MICROSTEPPING_J6;
-            gear_ratio = GEAR_RATIO_J6;
+        case WRIST_ROLL:
+            steps_per_rev = STEPS_PER_REV_ROLL;
+            microstepping = MICROSTEPPING_ROLL;
+            gear_ratio = GEAR_RATIO_ROLL;
             break;
         default:
-            return 0.0f; // Unknown joint
+            return 0.0f; // Unknown or linear axis
     }
 
     // Full steps per output revolution
@@ -49,27 +49,24 @@ float CoordinateMapper::steps_from_degrees(uint8_t joint_id, float degrees) {
     return rev_fraction * steps_per_out_rev;
 }
 
-bool CoordinateMapper::is_in_range(uint8_t joint_id, float degrees) {
-    switch (joint_id) {
-        case JOINT_YAW:
-            // J1 Yaw: ±180°
-            return (degrees >= -180.0f && degrees <= 180.0f);
-        case JOINT_SHOULDER:
-            // J2 Shoulder: 0°–180°
-            return (degrees >= 0.0f && degrees <= 180.0f);
-        case JOINT_ELBOW:
-            // J3 Elbow: 0°–150°
-            return (degrees >= 0.0f && degrees <= 150.0f);
-        case JOINT_WRIST_ROLL:
-            // J4 WristRoll: ±180°
-            return (degrees >= -180.0f && degrees <= 180.0f);
-        case JOINT_WRIST_PITCH:
-            // J5 WristPitch: ±90°
-            return (degrees >= -90.0f && degrees <= 90.0f);
-        case JOINT_GRIPPER:
-            // J6 Gripper: 0°–90°
-            return (degrees >= 0.0f && degrees <= 90.0f);
+bool CoordinateMapper::is_in_range(uint8_t axis_id, float value) {
+    switch (axis_id) {
+        case AXIS_X:
+            // X axis: 0 to 1000 mm
+            return (value >= 0.0f && value <= 1000.0f);
+        case AXIS_Y:
+            // Y axis: 0 to 1000 mm
+            return (value >= 0.0f && value <= 1000.0f);
+        case AXIS_Z:
+            // Z axis: 0 to 500 mm
+            return (value >= 0.0f && value <= 500.0f);
+        case WRIST_PITCH:
+            // WristPitch: ±90°
+            return (value >= -90.0f && value <= 90.0f);
+        case WRIST_ROLL:
+            // WristRoll: ±90°
+            return (value >= -90.0f && value <= 90.0f);
         default:
-            return false; // Unknown joint, consider out of range
+            return false; // Unknown axis, consider out of range
     }
 }

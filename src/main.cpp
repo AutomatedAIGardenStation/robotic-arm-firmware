@@ -46,10 +46,12 @@ void delay(unsigned long ms) {}
 #define SERIAL_BAUD    115200
 #define LINE_BUF_SIZE  128
 #define HEARTBEAT_MS   1000UL   // emit heartbeat every 1 s
+#define WATCHDOG_MS    10000UL  // 10s PING watchdog
 
 static char     g_line_buf[LINE_BUF_SIZE];
 static uint8_t  g_line_len   = 0;
 static uint32_t g_last_hb_ms = 0;
+uint32_t g_last_ping_ms = 0;
 
 // cppcheck-suppress unusedFunction
 void setup() {
@@ -58,6 +60,7 @@ void setup() {
     g_line_buf[0] = '\0';
     g_line_len    = 0;
     g_last_hb_ms  = millis();
+    g_last_ping_ms = millis();
 
     // TODO: initialise motor drivers, limit-switch pins here
     protocol_emit_event("EVT:BOOT:fw=arm_controller:v=0.1.0");
@@ -95,13 +98,19 @@ void loop() {
         g_last_hb_ms = now;
     }
 
+    // ── Watchdog ─────────────────────────────────────────────────────────────
+    if ((now - g_last_ping_ms) > WATCHDOG_MS) {
+        if (!g_safety_monitor.isFaulted()) {
+            g_safety_monitor.triggerFault();
+            protocol_emit_event("EVT:ARM_FAULT:code=WATCHDOG_TIMEOUT");
+        }
+    }
+
     g_motion_controller.update();
     MotionState current_state = g_motion_controller.getState();
     if (g_last_motion_state == MotionState::MOVING) {
-        if (current_state == MotionState::IDLE) {
-            protocol_emit_event("EVT:ARM_DONE");
-        } else if (current_state == MotionState::FAULT) {
-            protocol_emit_event("EVT:ARM_FAULT:code=UNKNOWN");
+        if (current_state == MotionState::FAULT && current_state != g_last_motion_state) {
+            // Handled internally by MotionController
         }
     }
     g_last_motion_state = current_state;
