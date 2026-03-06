@@ -6,9 +6,9 @@ void setUp(void) {}
 void tearDown(void) {}
 
 void test_crc8_computation(void) {
-    const char* data = "0002:ARM_MOVE_TO:x=10:y=20:z=30:";
+    const char* data = "0002:ARM_MOVE_TO:10:20:30:";
     uint8_t crc = crc8_compute(data, strlen(data));
-    TEST_ASSERT_EQUAL_HEX8(0x70, crc);
+    TEST_ASSERT_EQUAL_HEX8(0xF0, crc);
 }
 
 int main(int argc, char **argv) {
