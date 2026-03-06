@@ -66,7 +66,11 @@ void setup() {
     g_last_ping_ms = millis();
 
     // Initialise motor drivers, limit-switch pins here
-    protocol_emit_event("EVT:BOOT:fw=arm_controller:v=0.1.0");
+    protocol_emit_event(EVT_ARM_BOOT ":fw=arm_controller:v=0.1.0");
+
+    Command cmd;
+    cmd.type = CommandType::ARM_HOME;
+    g_motion_controller.execute(cmd);
 }
 
 extern SafetyMonitor g_safety_monitor; // Defined in protocol.cpp
