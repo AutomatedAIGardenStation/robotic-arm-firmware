@@ -70,6 +70,17 @@ void test_reset_all_sets_mocks_to_zero(void) {
 }
 
 void test_motion_controller_emits_arm_done_when_matched(void) {
+    // Need to home first
+    Command home_cmd;
+    home_cmd.type = CommandType::ARM_HOME;
+    controller->execute(home_cmd);
+    controller->update();
+    switches[2].setTriggered(true);
+    controller->update();
+    switches[0].setTriggered(true);
+    switches[1].setTriggered(true);
+    controller->update();
+
     Command cmd;
     cmd.type = CommandType::ARM_MOVE_TO;
     cmd.has_x = true;
@@ -88,6 +99,17 @@ void test_motion_controller_emits_arm_done_when_matched(void) {
 }
 
 void test_motion_controller_emits_fault_when_deviated(void) {
+    // Need to home first
+    Command home_cmd;
+    home_cmd.type = CommandType::ARM_HOME;
+    controller->execute(home_cmd);
+    controller->update();
+    switches[2].setTriggered(true);
+    controller->update();
+    switches[0].setTriggered(true);
+    switches[1].setTriggered(true);
+    controller->update();
+
     Command cmd;
     cmd.type = CommandType::ARM_MOVE_TO;
     cmd.has_x = true;
@@ -107,6 +129,17 @@ void test_motion_controller_emits_fault_when_deviated(void) {
 }
 
 void test_motion_controller_emits_done_within_tolerance(void) {
+    // Need to home first
+    Command home_cmd;
+    home_cmd.type = CommandType::ARM_HOME;
+    controller->execute(home_cmd);
+    controller->update();
+    switches[2].setTriggered(true);
+    controller->update();
+    switches[0].setTriggered(true);
+    switches[1].setTriggered(true);
+    controller->update();
+
     Command cmd;
     cmd.type = CommandType::ARM_MOVE_TO;
     cmd.has_x = true;

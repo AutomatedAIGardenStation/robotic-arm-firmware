@@ -11,6 +11,8 @@ extern void protocol_emit_event(const char* event);
 MotionController::MotionController(IMotorDriver* drvs[6], SafetyMonitor* safety, EncoderReader* encoder_reader) : engine(drvs) {
     state = MotionState::IDLE;
     current_command_type = CommandType::NONE;
+    homing_stage = 0;
+    is_homed = false;
     safety_monitor = safety;
     this->encoder_reader = encoder_reader;
 
@@ -57,7 +59,7 @@ void MotionController::execute(const Command& cmd) {
         return;
     }
 
-    if (state == MotionState::MOVING) {
+    if (state == MotionState::MOVING || state == MotionState::HOMING) {
         if (!queue.enqueue(cmd)) {
             protocol_emit_event("EVT:ARM_FAULT:code=QUEUE_FULL:tier=soft");
         }
@@ -71,6 +73,10 @@ void MotionController::process_command(const Command& cmd) {
     current_cmd = cmd;
 
     if (cmd.type == CommandType::ARM_MOVE_TO) {
+        if (!is_homed) {
+            protocol_emit_event("EVT:ARM_FAULT:code=UNHOMED:tier=soft");
+            return;
+        }
         if (cmd.has_x && !CoordinateMapper::is_in_range(CoordinateMapper::AXIS_X, cmd.x)) {
             protocol_emit_event("EVT:ARM_FAULT:code=OUT_OF_RANGE:tier=soft");
             return;
@@ -117,11 +123,18 @@ void MotionController::process_command(const Command& cmd) {
         expected_steps[5] += 10;
         active_joints[5] = true;
     } else if (cmd.type == CommandType::ARM_HOME) {
-        // Return to 0
-        for (int i = 0; i < 6; i++) {
-            expected_steps[i] = 0;
-            active_joints[i] = true;
+        state = MotionState::HOMING;
+        homing_stage = 1; // Z priority
+        if (safety_monitor) {
+            safety_monitor->setHomingMode(true);
         }
+        protocol_emit_event("EVT:ARM_HOMING:axis=Z");
+
+        // Move Z negative by a large amount
+        expected_steps[2] -= 100000;
+        active_joints[2] = true;
+        engine.moveTo(current_steps, expected_steps);
+        return;
     } else if (cmd.type == CommandType::GRIPPER_OPEN || cmd.type == CommandType::GRIPPER_CLOSE) {
         // Advance dummy joint
         expected_steps[5] += 10;
@@ -132,6 +145,82 @@ void MotionController::process_command(const Command& cmd) {
 }
 
 void MotionController::update() {
+    if (state == MotionState::HOMING) {
+        engine.update();
+
+        if (homing_stage == 1) {
+            if (safety_monitor && safety_monitor->isLimitTriggered(2)) { // Z limit hit
+                engine.stopAxis(2);
+                current_steps[2] = 0;
+                expected_steps[2] = 0;
+                homing_stage = 2; // X/Y next
+
+                protocol_emit_event("EVT:ARM_HOMING:axis=X");
+                protocol_emit_event("EVT:ARM_HOMING:axis=Y");
+
+                // Move X and Y negative by a large amount
+                expected_steps[0] -= 100000;
+                expected_steps[1] -= 100000;
+                active_joints[0] = true;
+                active_joints[1] = true;
+                engine.moveTo(current_steps, expected_steps);
+            } else if (!engine.isMoving()) {
+                // Should not happen unless arm is physically disconnected or steps exhausted
+                state = MotionState::FAULT;
+                if (safety_monitor) safety_monitor->setHomingMode(false);
+                protocol_emit_event("EVT:ARM_FAULT:code=HOME_Z_TIMEOUT:tier=hard");
+            }
+        } else if (homing_stage == 2) {
+            bool x_hit = (safety_monitor && safety_monitor->isLimitTriggered(0));
+            bool y_hit = (safety_monitor && safety_monitor->isLimitTriggered(1));
+
+            if (x_hit) {
+                engine.stopAxis(0);
+                current_steps[0] = 0;
+                expected_steps[0] = 0;
+            }
+            if (y_hit) {
+                engine.stopAxis(1);
+                current_steps[1] = 0;
+                expected_steps[1] = 0;
+            }
+
+            if (x_hit && y_hit) {
+                engine.stopAxis(0);
+                engine.stopAxis(1);
+
+                if (safety_monitor) {
+                    safety_monitor->setHomingMode(false);
+                }
+
+                if (encoder_reader) {
+                    encoder_reader->resetAll();
+                }
+
+                for (int i = 0; i < 6; i++) {
+                    current_steps[i] = 0;
+                    expected_steps[i] = 0;
+                    active_joints[i] = false;
+                }
+
+                state = MotionState::IDLE;
+                homing_stage = 0;
+                is_homed = true;
+                protocol_emit_event("EVT:ARM_HOMED");
+
+                Command next_cmd;
+                if (queue.dequeue(next_cmd)) {
+                    process_command(next_cmd);
+                }
+            } else if (!engine.isMoving()) {
+                state = MotionState::FAULT;
+                if (safety_monitor) safety_monitor->setHomingMode(false);
+                protocol_emit_event("EVT:ARM_FAULT:code=HOME_XY_TIMEOUT:tier=hard");
+            }
+        }
+        return;
+    }
+
     if (state == MotionState::MOVING) {
         engine.update();
 
@@ -162,6 +251,7 @@ void MotionController::update() {
 
         if (position_mismatch) {
             state = MotionState::FAULT;
+            is_homed = false; // Lost position tracking
             protocol_emit_event("EVT:ARM_FAULT:code=POSITION_MISMATCH:tier=hard");
             return;
         }
@@ -170,17 +260,7 @@ void MotionController::update() {
             current_steps[i] = expected_steps[i];
         }
 
-        if (current_command_type == CommandType::ARM_HOME) {
-            if (encoder_reader) {
-                encoder_reader->resetAll();
-            }
-            for (int i = 0; i < 6; i++) {
-                current_steps[i] = 0;
-                expected_steps[i] = 0;
-                active_joints[i] = false;
-            }
-            protocol_emit_event("EVT:ARM_HOMED");
-        } else if (current_command_type == CommandType::WRIST_SET) {
+        if (current_command_type == CommandType::WRIST_SET) {
             protocol_emit_event("EVT:WRIST_DONE");
         } else if (current_command_type == CommandType::TOOL_DOCK) {
             // Include the tool name if available, else emit basic DOCKED

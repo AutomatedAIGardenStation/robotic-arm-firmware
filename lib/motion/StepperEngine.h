@@ -18,6 +18,9 @@ public:
     // Check if a move is currently active
     bool isMoving() const;
 
+    // Immediately stop a specific axis
+    void stopAxis(int axis_index);
+
 private:
     IMotorDriver* drivers[6];
     bool moving;

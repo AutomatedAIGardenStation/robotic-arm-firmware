@@ -153,3 +153,22 @@ void StepperEngine::update() {
 bool StepperEngine::isMoving() const {
     return moving;
 }
+
+void StepperEngine::stopAxis(int axis_index) {
+    if (axis_index >= 0 && axis_index < 6) {
+        delta[axis_index] = 0;
+        // Do not disable the driver to maintain holding torque against gravity
+
+        // If all axes are stopped, mark as not moving
+        bool any_moving = false;
+        for (int i = 0; i < 6; i++) {
+            if (delta[i] > 0) {
+                any_moving = true;
+                break;
+            }
+        }
+        if (!any_moving) {
+            moving = false;
+        }
+    }
+}
