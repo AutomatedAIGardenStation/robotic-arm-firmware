@@ -172,31 +172,33 @@ jobs:
               return '';
             }
 
+            function escapeRegex(value) {
+              return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            }
+
+            function buildMarkerRegex(startMarker, endMarker) {
+              const start = escapeRegex(startMarker);
+              const end = escapeRegex(endMarker);
+              return new RegExp(`(?:^|\\r?\\n)\\s*${start}\\s*\\r?\\n([\\s\\S]*?)\\r?\\n\\s*${end}(?=\\r?\\n|$)`, 'm');
+            }
+
             function extractMarkedSection(body, startMarker, endMarker) {
               const text = String(body || '');
-              const start = text.indexOf(startMarker);
-              if (start === -1) return '';
-              const from = start + startMarker.length;
-              const end = text.indexOf(endMarker, from);
-              if (end === -1) return '';
-              return text.slice(from, end).trim();
+              const match = text.match(buildMarkerRegex(startMarker, endMarker));
+              if (!match || typeof match[1] !== 'string') return '';
+              return match[1].trim();
             }
 
             function upsertMarkedSection(body, startMarker, endMarker, content) {
               const text = String(body || '');
               const section = `${startMarker}\n${String(content || '').trim()}\n${endMarker}`;
-              const start = text.indexOf(startMarker);
-              if (start === -1) {
+              const markerRegex = buildMarkerRegex(startMarker, endMarker);
+              const match = markerRegex.exec(text);
+              if (!match || typeof match.index !== 'number') {
                 return [text.trimEnd(), section].filter(Boolean).join('\n\n');
               }
-              const from = start;
-              const contentStart = start + startMarker.length;
-              const end = text.indexOf(endMarker, contentStart);
-              if (end === -1) {
-                return [text.trimEnd(), section].filter(Boolean).join('\n\n');
-              }
-              const before = text.slice(0, from).trimEnd();
-              const after = text.slice(end + endMarker.length).trimStart();
+              const before = text.slice(0, match.index).trimEnd();
+              const after = text.slice(match.index + match[0].length).trimStart();
               return [before, section, after].filter(Boolean).join('\n\n');
             }
 
@@ -209,7 +211,9 @@ jobs:
             function parseReplyFromIssueBody(body) {
               const section = extractMarkedSection(body, JULES_REPLY_START, JULES_REPLY_END);
               if (!section) return '';
-              return section.replace(JULES_REPLY_PLACEHOLDER, '').trim();
+              const prompt = section.replace(JULES_REPLY_PLACEHOLDER, '').trim();
+              if (!prompt || prompt === '...' || prompt === '…') return '';
+              return prompt;
             }
 
             const issuesResponse = await retryWithRateLimit(async () => {
@@ -334,7 +338,7 @@ jobs:
                   '',
                   'How to answer:',
                   '- Comment on this issue: `/jules <your answer>`',
-                  `- Or fill text between markers ${JULES_REPLY_START} ... ${JULES_REPLY_END}`
+                  '- Or fill text in the dedicated Jules reply block below.'
                 ].join('\n');
 
                 let desiredIssueBody = upsertMarkedSection(
