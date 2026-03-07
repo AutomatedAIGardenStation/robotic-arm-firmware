@@ -184,11 +184,40 @@ jobs:
               return '';
             }
 
-            function shouldAutoContinueFailure(failureReason) {
-              const text = String(failureReason || '').toLowerCase();
-              if (!text) return false;
-              return text.includes('jules was unable to complete the task') ||
-                text.includes('unable to complete the task');
+            function extractFailureReason(sessionData, activities) {
+              const fromActivities = extractLatestSessionFailure(activities);
+              if (fromActivities) return fromActivities;
+              const candidates = [
+                sessionData?.failureReason,
+                sessionData?.error?.message,
+                sessionData?.lastError?.message,
+                sessionData?.statusMessage,
+                sessionData?.stateMessage,
+                sessionData?.message
+              ];
+              for (const value of candidates) {
+                if (typeof value === 'string' && value.trim()) {
+                  return value.trim();
+                }
+              }
+              return '';
+            }
+
+            function shouldAutoContinueFailure(failureReason, sessionData) {
+              const fromReason = String(failureReason || '').toLowerCase();
+              if (
+                fromReason.includes('jules was unable to complete the task') ||
+                fromReason.includes('unable to complete the task')
+              ) {
+                return true;
+              }
+              try {
+                const payload = JSON.stringify(sessionData || {}).toLowerCase();
+                return payload.includes('jules was unable to complete the task') ||
+                  payload.includes('unable to complete the task');
+              } catch (_) {
+                return false;
+              }
             }
 
             function escapeRegex(value) {
@@ -499,9 +528,9 @@ jobs:
                 const activities = activitiesResp.ok && Array.isArray(activitiesResp.data?.activities)
                   ? activitiesResp.data.activities
                   : [];
-                const failureReason = extractLatestSessionFailure(activities);
+                const failureReason = extractFailureReason(sessionData, activities);
 
-                if (shouldAutoContinueFailure(failureReason)) {
+                if (shouldAutoContinueFailure(failureReason, sessionData)) {
                   const continueToken = `JulesAutoContinue:${sessionId}:${simpleHash(sessionUpdateTime || failureReason || 'failed')}`;
                   const alreadySent = comments.some(comment => (comment.body || '').includes(continueToken));
 
