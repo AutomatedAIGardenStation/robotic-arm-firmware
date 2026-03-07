@@ -1,0 +1,401 @@
+name: Jules PR Review Forwarder
+
+on:
+  pull_request_review:
+    types: [submitted]
+  pull_request_review_comment:
+    types: [created, edited]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to process'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: write
+
+concurrency:
+  group: jules-pr-review-forwarder-${{ github.repository }}-${{ github.event.pull_request.number || github.event.issue.number || github.event.inputs.pr_number || 'manual' }}
+  cancel-in-progress: false
+
+jobs:
+  forward:
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'pull_request_review' ||
+      github.event_name == 'pull_request_review_comment' ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request)
+    runs-on: [self-hosted, Windows]
+    env:
+      JULES_PROXY_URL: ${{ secrets.JULES_PROXY_URL }}
+      JULES_PROXY_SECRET: ${{ secrets.JULES_PROXY_SECRET }}
+      JULES_REVIEW_FORWARD_BOT_USERS: ${{ vars.JULES_REVIEW_FORWARD_BOT_USERS }}
+      JULES_REVIEW_FORWARD_MAX_ITEMS: ${{ vars.JULES_REVIEW_FORWARD_MAX_ITEMS }}
+    steps:
+      - name: Forward actionable PR feedback to Jules session
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.REPO_ACCESS_TOKEN || github.token }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const proxyUrl = (process.env.JULES_PROXY_URL || '').trim().replace(/\/$/, '');
+            const proxySecret = (process.env.JULES_PROXY_SECRET || '').trim();
+            const maxItems = Math.max(1, parseInt(process.env.JULES_REVIEW_FORWARD_MAX_ITEMS || '12', 10) || 12);
+
+            if (!proxyUrl || !proxySecret) {
+              core.warning('JULES_PROXY_URL or JULES_PROXY_SECRET is not configured. Skipping forwarding.');
+              return;
+            }
+
+            const explicitUsers = (process.env.JULES_REVIEW_FORWARD_BOT_USERS || '')
+              .split(',')
+              .map(user => user.trim().toLowerCase())
+              .filter(Boolean);
+
+            function simpleHash(value) {
+              const input = String(value || '');
+              let hash = 0;
+              for (let i = 0; i < input.length; i++) {
+                hash = ((hash << 5) - hash) + input.charCodeAt(i);
+                hash |= 0;
+              }
+              return Math.abs(hash).toString(36);
+            }
+
+            function compactText(value, maxLen = 320) {
+              const text = String(value || '')
+                .replace(/\s+/g, ' ')
+                .trim();
+              if (!text) return '';
+              return text.length > maxLen ? `${text.slice(0, maxLen - 1)}…` : text;
+            }
+
+            function isBotFeedbackAuthor(login) {
+              const normalized = String(login || '').toLowerCase();
+              if (!normalized) return false;
+              if (explicitUsers.length > 0) return explicitUsers.includes(normalized);
+
+              return normalized.includes('coderabbit') ||
+                normalized.includes('copilot') ||
+                normalized.includes('cursor');
+            }
+
+            async function retryWithRateLimit(fn, maxRetries = 3) {
+              for (let attempt = 0; attempt < maxRetries; attempt++) {
+                try {
+                  return await fn();
+                } catch (error) {
+                  if (error.status === 429 && attempt < maxRetries - 1) {
+                    await new Promise(resolve => setTimeout(resolve, (attempt + 1) * 2000));
+                    continue;
+                  }
+                  throw error;
+                }
+              }
+            }
+
+            async function listAllPages(fetchPage) {
+              const all = [];
+              let page = 1;
+              while (page <= 10) {
+                const response = await fetchPage(page);
+                const chunk = response?.data || [];
+                all.push(...chunk);
+                if (chunk.length < 100) break;
+                page += 1;
+              }
+              return all;
+            }
+
+            async function callProxy(method, path, body = undefined) {
+              const headers = { 'X-Proxy-Secret': proxySecret };
+              const request = { method, headers };
+              if (body !== undefined) {
+                headers['Content-Type'] = 'application/json';
+                request.body = JSON.stringify(body);
+              }
+
+              const response = await fetch(`${proxyUrl}${path}`, request);
+              const text = await response.text();
+              let data = null;
+              if (text) {
+                try {
+                  data = JSON.parse(text);
+                } catch (error) {
+                  data = null;
+                }
+              }
+
+              return { ok: response.ok, status: response.status, data, text };
+            }
+
+            let prNumber = null;
+            if (context.eventName === 'workflow_dispatch') {
+              const raw = '${{ github.event.inputs.pr_number }}';
+              const parsed = parseInt(raw || '', 10);
+              if (Number.isFinite(parsed) && parsed > 0) prNumber = parsed;
+            } else if (context.eventName === 'pull_request_review') {
+              prNumber = context.payload.pull_request?.number || null;
+            } else if (context.eventName === 'pull_request_review_comment') {
+              prNumber = context.payload.pull_request?.number || null;
+            } else if (context.eventName === 'issue_comment') {
+              if (!context.payload.issue?.pull_request) {
+                console.log('Issue comment is not for a PR. Skipping.');
+                return;
+              }
+              const commentAuthor = String(context.payload.comment?.user?.login || '').toLowerCase();
+              const commentBody = String(context.payload.comment?.body || '');
+              if (commentAuthor === 'github-actions[bot]' && commentBody.includes('JulesReviewForwardToken:')) {
+                console.log('Detected workflow audit comment event; skipping to avoid loops.');
+                return;
+              }
+              prNumber = context.payload.issue.number;
+            }
+
+            if (!prNumber) {
+              core.warning('PR number was not resolved from event payload.');
+              return;
+            }
+
+            const prResp = await retryWithRateLimit(async () => {
+              return await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
+            });
+            const pr = prResp.data;
+            const headRef = String(pr.head?.ref || '');
+
+            if (!headRef.startsWith('agent/')) {
+              console.log(`PR #${pr.number} is not an agent PR (head=${headRef}). Skipping.`);
+              return;
+            }
+
+            const issueMatch = headRef.match(/issue-(\d+)/i);
+            if (!issueMatch) {
+              console.log(`PR #${pr.number} does not contain issue-<n> in branch name (${headRef}). Skipping.`);
+              return;
+            }
+            const linkedIssueNumber = parseInt(issueMatch[1], 10);
+            if (!Number.isFinite(linkedIssueNumber) || linkedIssueNumber <= 0) {
+              console.log(`Could not parse linked issue number from ${headRef}. Skipping.`);
+              return;
+            }
+
+            const linkedIssueComments = await listAllPages(async (page) => {
+              return await retryWithRateLimit(async () => {
+                return await github.rest.issues.listComments({
+                  owner,
+                  repo,
+                  issue_number: linkedIssueNumber,
+                  per_page: 100,
+                  page
+                });
+              });
+            });
+
+            let sessionId = null;
+            for (const comment of [...linkedIssueComments].reverse()) {
+              const body = comment.body || '';
+              const match = body.match(/JulesSessionId:\s*([^\s]+)/i);
+              if (match && match[1]) {
+                sessionId = match[1].trim();
+                break;
+              }
+            }
+
+            if (!sessionId) {
+              core.warning(`Linked issue #${linkedIssueNumber} does not contain JulesSessionId in comments.`);
+              return;
+            }
+
+            const reviewComments = await listAllPages(async (page) => {
+              return await retryWithRateLimit(async () => {
+                return await github.rest.pulls.listReviewComments({
+                  owner,
+                  repo,
+                  pull_number: pr.number,
+                  per_page: 100,
+                  page
+                });
+              });
+            });
+
+            const reviews = await listAllPages(async (page) => {
+              return await retryWithRateLimit(async () => {
+                return await github.rest.pulls.listReviews({
+                  owner,
+                  repo,
+                  pull_number: pr.number,
+                  per_page: 100,
+                  page
+                });
+              });
+            });
+
+            const prIssueComments = await listAllPages(async (page) => {
+              return await retryWithRateLimit(async () => {
+                return await github.rest.issues.listComments({
+                  owner,
+                  repo,
+                  issue_number: pr.number,
+                  per_page: 100,
+                  page
+                });
+              });
+            });
+
+            const feedbackItems = [];
+
+            for (const item of reviewComments) {
+              const author = item.user?.login || '';
+              if (!isBotFeedbackAuthor(author)) continue;
+              const body = compactText(item.body || '');
+              if (!body) continue;
+
+              feedbackItems.push({
+                key: `rc-${item.id}`,
+                id: item.id,
+                kind: 'review_comment',
+                author,
+                body,
+                path: item.path || '',
+                line: item.line || item.original_line || null,
+                url: item.html_url || pr.html_url,
+                updated_at: item.updated_at || item.created_at || ''
+              });
+            }
+
+            for (const item of reviews) {
+              const author = item.user?.login || '';
+              if (!isBotFeedbackAuthor(author)) continue;
+              const body = compactText(item.body || '');
+              if (!body) continue;
+
+              feedbackItems.push({
+                key: `rv-${item.id}`,
+                id: item.id,
+                kind: 'review_summary',
+                author,
+                body,
+                path: '',
+                line: null,
+                url: item.html_url || pr.html_url,
+                updated_at: item.submitted_at || item.created_at || ''
+              });
+            }
+
+            for (const item of prIssueComments) {
+              const author = item.user?.login || '';
+              if (!isBotFeedbackAuthor(author)) continue;
+              const body = compactText(item.body || '');
+              if (!body) continue;
+              if (body.includes('JulesReviewForwardToken:')) continue;
+
+              feedbackItems.push({
+                key: `ic-${item.id}`,
+                id: item.id,
+                kind: 'pr_comment',
+                author,
+                body,
+                path: '',
+                line: null,
+                url: item.html_url || pr.html_url,
+                updated_at: item.updated_at || item.created_at || ''
+              });
+            }
+
+            const dedupMap = new Map();
+            for (const item of feedbackItems) {
+              if (!dedupMap.has(item.key)) dedupMap.set(item.key, item);
+            }
+
+            const normalized = [...dedupMap.values()]
+              .sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)))
+              .slice(0, maxItems);
+
+            if (normalized.length === 0) {
+              console.log(`PR #${pr.number}: no actionable bot feedback to forward.`);
+              return;
+            }
+
+            const digest = simpleHash(normalized.map(item => {
+              return `${item.kind}|${item.id}|${item.updated_at}|${simpleHash(item.body)}`;
+            }).join('\n'));
+
+            const forwardToken = `JulesReviewForward:${pr.number}:${pr.head?.sha || 'no-sha'}:${digest}`;
+            const alreadyForwarded = prIssueComments.some(comment => {
+              return (comment.body || '').includes(`JulesReviewForwardToken: ${forwardToken}`);
+            });
+
+            if (alreadyForwarded) {
+              console.log(`PR #${pr.number}: token ${forwardToken} already forwarded.`);
+              return;
+            }
+
+            const promptLines = [
+              `New review feedback arrived for PR #${pr.number}: ${pr.title}`,
+              `Branch: ${headRef}`,
+              `Linked issue: #${linkedIssueNumber}`,
+              '',
+              'Please apply fixes for the items below before merge.',
+              'Focus on correctness, tests, and preserving existing behavior.',
+              '',
+              'Review feedback items:'
+            ];
+
+            normalized.forEach((item, idx) => {
+              const location = item.path
+                ? `${item.path}${item.line ? `:${item.line}` : ''}`
+                : 'general';
+
+              promptLines.push(`${idx + 1}. [${item.kind}] ${item.author} - ${location}`);
+              promptLines.push(`   ${item.body}`);
+              promptLines.push(`   Link: ${item.url}`);
+            });
+
+            promptLines.push('');
+            promptLines.push(`JulesReviewForwardToken: ${forwardToken}`);
+            const prompt = promptLines.join('\n').slice(0, 12000);
+
+            const encodedId = encodeURIComponent(sessionId);
+            const sendResp = await callProxy('POST', `/v1alpha/sessions/${encodedId}:sendMessage`, { prompt });
+
+            if (!sendResp.ok) {
+              await retryWithRateLimit(async () => {
+                return await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number: pr.number,
+                  body: [
+                    'Failed to forward PR review feedback to Jules session.',
+                    `LinkedIssue: #${linkedIssueNumber}`,
+                    `JulesSessionId: ${sessionId}`,
+                    `HTTP status: ${sendResp.status}`,
+                    `JulesReviewForwardToken: ${forwardToken}`
+                  ].join('\n')
+                });
+              });
+              core.setFailed(`Failed to send feedback to Jules session (${sendResp.status}).`);
+              return;
+            }
+
+            await retryWithRateLimit(async () => {
+              return await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: pr.number,
+                body: [
+                  '**PR review feedback forwarded to Jules session**',
+                  `LinkedIssue: #${linkedIssueNumber}`,
+                  `JulesSessionId: ${sessionId}`,
+                  `ItemsForwarded: ${normalized.length}`,
+                  `JulesReviewForwardToken: ${forwardToken}`
+                ].join('\n')
+              });
+            });
+
+            console.log(`Forwarded ${normalized.length} item(s) from PR #${pr.number} to Jules session ${sessionId}.`);
