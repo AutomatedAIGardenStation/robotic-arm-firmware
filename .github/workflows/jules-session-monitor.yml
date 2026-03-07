@@ -172,6 +172,25 @@ jobs:
               return '';
             }
 
+            function extractLatestSessionFailure(activities) {
+              if (!Array.isArray(activities)) return '';
+              for (let i = activities.length - 1; i >= 0; i--) {
+                const failed = activities[i]?.sessionFailed;
+                if (!failed) continue;
+                if (typeof failed.message === 'string' && failed.message.trim()) return failed.message.trim();
+                const nestedMessage = failed?.error?.message;
+                if (typeof nestedMessage === 'string' && nestedMessage.trim()) return nestedMessage.trim();
+              }
+              return '';
+            }
+
+            function shouldAutoContinueFailure(failureReason) {
+              const text = String(failureReason || '').toLowerCase();
+              if (!text) return false;
+              return text.includes('jules was unable to complete the task') ||
+                text.includes('unable to complete the task');
+            }
+
             function escapeRegex(value) {
               return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             }
@@ -473,6 +492,44 @@ jobs:
 
                 await addIssueLabels(issue.number, ['agent-awaiting-input']);
                 continue;
+              }
+
+              if (sessionState === 'FAILED') {
+                const activitiesResp = await callProxy('GET', `/v1alpha/sessions/${encodedId}/activities?pageSize=30`);
+                const activities = activitiesResp.ok && Array.isArray(activitiesResp.data?.activities)
+                  ? activitiesResp.data.activities
+                  : [];
+                const failureReason = extractLatestSessionFailure(activities);
+
+                if (shouldAutoContinueFailure(failureReason)) {
+                  const continueToken = `JulesAutoContinue:${sessionId}:${simpleHash(sessionUpdateTime || failureReason || 'failed')}`;
+                  const alreadySent = comments.some(comment => (comment.body || '').includes(continueToken));
+
+                  if (!alreadySent) {
+                    const continueResp = await callProxy('POST', `/v1alpha/sessions/${encodedId}:sendMessage`, { prompt: 'Continue' });
+                    if (continueResp.ok) {
+                      await postIssueComment(issue.number, [
+                        '@jules',
+                        '',
+                        '**Auto-continue sent to Jules session**',
+                        `JulesSessionId: ${sessionId}`,
+                        failureReason ? `Failure: ${failureReason}` : '',
+                        `ContinueToken: ${continueToken}`
+                      ]);
+                    } else {
+                      await postIssueComment(issue.number, [
+                        '@jules',
+                        '',
+                        '**Failed to auto-continue Jules session**',
+                        `JulesSessionId: ${sessionId}`,
+                        failureReason ? `Failure: ${failureReason}` : '',
+                        `HTTP status: ${continueResp.status}`,
+                        `ContinueToken: ${continueToken}`
+                      ]);
+                    }
+                  }
+                  continue;
+                }
               }
 
               // Clear waiting label when Jules is not waiting for feedback anymore.
